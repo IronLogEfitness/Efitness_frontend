@@ -20,7 +20,10 @@ import { ScalePressable } from '../components/ScalePressable';
 import { CoachStackParamList } from '../navigation/types';
 import {
   ConversationMessage,
+  ProposedAction,
+  confirmChat,
   getApiErrorMessage,
+  getBriefing,
   getConversation,
   getConversations,
   sendChat
@@ -33,6 +36,10 @@ type Message = {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  // Coach-proposed writes shown under an assistant bubble for approval. Live only —
+  // not persisted as messages, so resumed conversations never re-show them.
+  actions?: ProposedAction[];
+  actionsResolved?: boolean;
 };
 
 // How many recent messages to load when resuming a conversation.
@@ -110,6 +117,13 @@ export function ChatScreen({ navigation, route }: Props) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [publishedLabels, setPublishedLabels] = useState<string[]>([]);
   const [activeLabels, setActiveLabels] = useState<string[]>([]);
+  // Which proposed actions are ticked for approval (by action_id), and whether a
+  // confirm call is in flight.
+  const [selectedActions, setSelectedActions] = useState<Record<string, boolean>>({});
+  const [confirming, setConfirming] = useState(false);
+  // Today's one-line pre-workout briefing (server-cached per day). Dismissable.
+  const [briefing, setBriefing] = useState<string | null>(null);
+  const [briefingDismissed, setBriefingDismissed] = useState(false);
 
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(0.5)).current;
@@ -198,6 +212,23 @@ export function ChatScreen({ navigation, route }: Props) {
     }, [refreshLabels])
   );
 
+  // Pull today's briefing once on mount (server caches it per day, so this is cheap).
+  useEffect(() => {
+    let active = true;
+    getBriefing()
+      .then((b) => {
+        if (active && b?.text) {
+          setBriefing(b.text);
+        }
+      })
+      .catch(() => {
+        // non-fatal — the briefing is a nicety, not required
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
@@ -259,12 +290,27 @@ export function ChatScreen({ navigation, route }: Props) {
         navigation.setParams({ conversationId: response.conversation_id });
       }
 
+      const proposals = response.proposed_actions ?? [];
       const botMessage: Message = {
         id: `${Date.now()}-a`,
         role: 'assistant',
         content: response.reply,
-        timestamp: nowStamp()
+        timestamp: nowStamp(),
+        actions: proposals.length ? proposals : undefined
       };
+
+      // Pre-tick every actionable proposal (clarification-only ones aren't selectable).
+      if (proposals.length) {
+        setSelectedActions((prev) => {
+          const next = { ...prev };
+          proposals.forEach((a) => {
+            if (!a.needs_clarification) {
+              next[a.action_id] = true;
+            }
+          });
+          return next;
+        });
+      }
 
       setMessages((prev) => [...prev, botMessage]);
     } catch (error) {
@@ -283,6 +329,48 @@ export function ChatScreen({ navigation, route }: Props) {
     }
   };
 
+  const toggleAction = (actionId: string) => {
+    setSelectedActions((prev) => ({ ...prev, [actionId]: !prev[actionId] }));
+  };
+
+  // Apply (or dismiss) the proposed actions under one assistant message.
+  const reviewActions = async (message: Message, mode: 'apply' | 'dismiss') => {
+    if (!conversationId || !message.actions || confirming) {
+      return;
+    }
+    const selectable = message.actions.filter((a) => !a.needs_clarification);
+    const accepted =
+      mode === 'apply'
+        ? selectable.filter((a) => selectedActions[a.action_id]).map((a) => a.action_id)
+        : [];
+    const rejected = selectable
+      .filter((a) => !accepted.includes(a.action_id))
+      .map((a) => a.action_id);
+
+    setConfirming(true);
+    try {
+      const res = await confirmChat({
+        conversation_id: conversationId,
+        accepted_ids: accepted,
+        rejected_ids: rejected
+      });
+      // Hide the approval card and append the coach's confirmation reply.
+      setMessages((prev) => [
+        ...prev.map((m) => (m.id === message.id ? { ...m, actionsResolved: true } : m)),
+        {
+          id: `${Date.now()}-c`,
+          role: 'assistant',
+          content: res.reply,
+          timestamp: nowStamp()
+        }
+      ]);
+    } catch (error) {
+      Alert.alert('Could not apply', getApiErrorMessage(error));
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -295,7 +383,7 @@ export function ChatScreen({ navigation, route }: Props) {
     >
       <View style={styles.topBar}>
         <View style={styles.topBarMain}>
-          <Text style={styles.title}>AI COACH</Text>
+          <Text style={styles.title} numberOfLines={1}>AI COACH</Text>
           <View style={styles.subtitleRow}>
             <Animated.View style={[styles.liveDot, { opacity: pulse }]} />
             <Text style={styles.subtitle}>{sending ? 'Thinking…' : 'Remembers your chats'}</Text>
@@ -303,6 +391,9 @@ export function ChatScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.actions}>
+          <ScalePressable style={styles.actionBtn} onPress={() => navigation.navigate('Goals')}>
+            <Text style={styles.actionText}>GOALS</Text>
+          </ScalePressable>
           <ScalePressable style={styles.actionBtn} onPress={() => navigation.navigate('Conversations')}>
             <Text style={styles.actionText}>HISTORY</Text>
           </ScalePressable>
@@ -336,6 +427,18 @@ export function ChatScreen({ navigation, route }: Props) {
         </View>
       ) : null}
 
+      {briefing && !briefingDismissed ? (
+        <View style={styles.briefingCard}>
+          <View style={styles.briefingMain}>
+            <Text style={styles.briefingLabel}>TODAY</Text>
+            <Text style={styles.briefingText}>{briefing}</Text>
+          </View>
+          <ScalePressable style={styles.briefingClose} onPress={() => setBriefingDismissed(true)}>
+            <Text style={styles.briefingCloseText}>✕</Text>
+          </ScalePressable>
+        </View>
+      ) : null}
+
       {loadingHistory && messages.length === 0 ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={COLORS.accent} />
@@ -365,12 +468,78 @@ export function ChatScreen({ navigation, route }: Props) {
 
           {messages.map((message) => {
             const isUser = message.role === 'user';
+            const hasActions = !!message.actions?.length;
+            const showActions = hasActions && !message.actionsResolved;
+            const selectable = message.actions?.filter((a) => !a.needs_clarification) ?? [];
             return (
-              <View key={message.id} style={[styles.bubbleWrap, isUser ? styles.userWrap : styles.botWrap]}>
+              <View
+                key={message.id}
+                style={[
+                  styles.bubbleWrap,
+                  isUser ? styles.userWrap : styles.botWrap,
+                  showActions && styles.wideWrap
+                ]}
+              >
                 {!isUser ? <Text style={styles.botLabel}>IRONLOG AI</Text> : null}
                 <View style={[styles.bubble, isUser ? styles.userBubble : styles.botBubble]}>
                   <Text style={[styles.bubbleText, isUser && styles.userBubbleText]}>{message.content}</Text>
                 </View>
+
+                {showActions ? (
+                  <View style={styles.actionsCard}>
+                    <Text style={styles.actionsTitle}>PROPOSED ACTIONS</Text>
+                    {message.actions!.map((a) =>
+                      a.needs_clarification ? (
+                        <View key={a.action_id} style={styles.actionRow}>
+                          <Text style={styles.actionClarify}>❓ {a.clarification ?? a.summary}</Text>
+                        </View>
+                      ) : (
+                        <ScalePressable
+                          key={a.action_id}
+                          style={styles.actionRow}
+                          onPress={() => toggleAction(a.action_id)}
+                        >
+                          <View
+                            style={[
+                              styles.checkbox,
+                              selectedActions[a.action_id] && styles.checkboxOn
+                            ]}
+                          >
+                            {selectedActions[a.action_id] ? (
+                              <Text style={styles.checkMark}>✓</Text>
+                            ) : null}
+                          </View>
+                          <Text style={styles.actionSummary}>{a.summary}</Text>
+                        </ScalePressable>
+                      )
+                    )}
+                    {selectable.length ? (
+                      <View style={styles.actionButtons}>
+                        <ScalePressable
+                          style={[styles.confirmBtn, styles.confirmBtnGhost]}
+                          onPress={() => reviewActions(message, 'dismiss')}
+                        >
+                          <Text style={styles.confirmGhostText}>DISMISS</Text>
+                        </ScalePressable>
+                        <ScalePressable
+                          style={styles.confirmBtn}
+                          onPress={() => reviewActions(message, 'apply')}
+                        >
+                          {confirming ? (
+                            <ActivityIndicator color="#000" />
+                          ) : (
+                            <Text style={styles.confirmText}>APPROVE</Text>
+                          )}
+                        </ScalePressable>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                {hasActions && message.actionsResolved ? (
+                  <Text style={styles.actionsReviewed}>✓ Reviewed</Text>
+                ) : null}
+
                 <Text style={styles.timestamp}>{message.timestamp}</Text>
               </View>
             );
@@ -454,14 +623,14 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SPACING.sm
+    gap: 6
   },
   actionBtn: {
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: RADIUS.sm,
     backgroundColor: COLORS.surface2,
-    paddingHorizontal: SPACING.sm + 2,
+    paddingHorizontal: SPACING.sm,
     paddingVertical: 7
   },
   actionBtnAccent: {
@@ -574,6 +743,138 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontFamily: FONT.body,
     fontSize: 10
+  },
+  briefingCard: {
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: SPACING.sm,
+    backgroundColor: '#2d3910',
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm + 2
+  },
+  briefingMain: {
+    flex: 1
+  },
+  briefingLabel: {
+    color: COLORS.accent,
+    fontFamily: FONT.display,
+    fontSize: 12,
+    letterSpacing: 1.5
+  },
+  briefingText: {
+    marginTop: 2,
+    color: COLORS.text,
+    fontFamily: FONT.bodyMedium,
+    fontSize: 14,
+    lineHeight: 19
+  },
+  briefingClose: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  briefingCloseText: {
+    color: COLORS.accent,
+    fontFamily: FONT.bodyBold,
+    fontSize: 14
+  },
+  wideWrap: {
+    maxWidth: '94%'
+  },
+  actionsCard: {
+    marginTop: SPACING.sm,
+    borderWidth: 1,
+    borderColor: COLORS.accent,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.surface2,
+    padding: SPACING.md,
+    gap: SPACING.sm
+  },
+  actionsTitle: {
+    color: COLORS.accent,
+    fontFamily: FONT.display,
+    letterSpacing: 1,
+    fontSize: 12
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: SPACING.sm
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1
+  },
+  checkboxOn: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent
+  },
+  checkMark: {
+    color: '#000',
+    fontSize: 13,
+    fontFamily: FONT.bodyBold,
+    lineHeight: 16
+  },
+  actionSummary: {
+    flex: 1,
+    color: COLORS.text,
+    fontFamily: FONT.body,
+    fontSize: 14
+  },
+  actionClarify: {
+    flex: 1,
+    color: COLORS.muted,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontStyle: 'italic'
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: 2
+  },
+  confirmBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.accent,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  confirmBtnGhost: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border
+  },
+  confirmText: {
+    color: '#000',
+    fontFamily: FONT.display,
+    fontSize: 14,
+    letterSpacing: 1
+  },
+  confirmGhostText: {
+    color: COLORS.muted,
+    fontFamily: FONT.display,
+    fontSize: 14,
+    letterSpacing: 1
+  },
+  actionsReviewed: {
+    marginTop: 4,
+    color: COLORS.success,
+    fontFamily: FONT.bodyMedium,
+    fontSize: 11
   },
   inputBar: {
     paddingHorizontal: SPACING.md,

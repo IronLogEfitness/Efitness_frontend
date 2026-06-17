@@ -13,16 +13,28 @@ import { ScalePressable } from '../components/ScalePressable';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { useAuth } from '../services/AuthContext';
 import {
+  CoachBalance,
+  CoachRecap,
   ExerciseProgressPoint,
   getApiErrorMessage,
+  getBalance,
   getExerciseProgress,
   getExercisesByMuscle,
   getMuscles,
   getProgressOverview,
-  ProgressOverview
+  getRecap,
+  getWorkouts,
+  ProgressOverview,
+  Workout
 } from '../services/api';
 
 type ExerciseOption = { id: string; name: string };
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+}
 
 function monthShort(date: string) {
   const d = new Date(date);
@@ -51,6 +63,9 @@ export function ProgressScreen() {
   const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
   const [selectedExercise, setSelectedExercise] = useState<ExerciseOption | null>(null);
   const [chartData, setChartData] = useState<ExerciseProgressPoint[]>([]);
+  const [recap, setRecap] = useState<CoachRecap | null>(null);
+  const [balance, setBalance] = useState<CoachBalance | null>(null);
+  const [recentWorkouts, setRecentWorkouts] = useState<Workout[]>([]);
 
   const loadOptions = useCallback(async () => {
     const muscles = await getMuscles();
@@ -75,6 +90,20 @@ export function ProgressScreen() {
     try {
       const [overviewData, options] = await Promise.all([getProgressOverview(), loadOptions()]);
       setOverview(overviewData);
+
+      // Coach cards are a bonus layer — fetch them without blocking (or failing)
+      // the core progress load. Recap/balance are deterministic + server-cached.
+      getRecap().then(setRecap).catch(() => setRecap(null));
+      getBalance().then(setBalance).catch(() => setBalance(null));
+
+      // Recent sessions come from the workouts in the last 60 days (most recent
+      // first). The overview endpoint doesn't carry them, so fetch them here.
+      const today = new Date();
+      const since = new Date();
+      since.setDate(since.getDate() - 60);
+      getWorkouts({ start: ymd(since), end: ymd(today) })
+        .then((ws) => setRecentWorkouts([...ws].reverse().slice(0, 15)))
+        .catch(() => setRecentWorkouts([]));
 
       const first = options[0] || null;
       setSelectedExercise(first);
@@ -127,7 +156,7 @@ export function ProgressScreen() {
     <FlatList
       style={styles.container}
       contentContainerStyle={styles.content}
-      data={overview?.recent_sessions || []}
+      data={recentWorkouts}
       keyExtractor={(item) => String(item.id)}
       ListHeaderComponent={
         <>
@@ -149,10 +178,55 @@ export function ProgressScreen() {
               <Text style={styles.statLabel}>PRS THIS MONTH</Text>
             </View>
             <View style={styles.statCard}>
-              <Text style={styles.statValue}>{overview?.week_streak || 0}</Text>
-              <Text style={styles.statLabel}>WEEK STREAK</Text>
+              <Text style={styles.statValue}>{overview?.current_streak || 0}</Text>
+              <Text style={styles.statLabel}>DAY STREAK</Text>
             </View>
           </View>
+
+          {recap ? (
+            <View style={styles.coachCard}>
+              <Text style={styles.coachLabel}>THIS WEEK · {recap.week}</Text>
+              <Text style={styles.coachText}>{recap.text}</Text>
+              <View style={styles.recapStatsRow}>
+                <Text style={styles.recapStat}>{recap.total_sessions} sessions</Text>
+                <Text style={styles.recapStat}>{recap.total_sets} sets</Text>
+                <Text style={styles.recapStat}>{recap.prs} PRs</Text>
+                <Text style={styles.recapStat}>{recap.streak}d streak</Text>
+              </View>
+              {recap.best_lift ? (
+                <Text style={styles.recapBest}>🏆 Best lift: {recap.best_lift}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {balance ? (
+            <View style={styles.coachCard}>
+              <Text style={styles.coachLabel}>PUSH · PULL · LEGS BALANCE</Text>
+              <View style={styles.balanceRow}>
+                <View style={styles.balanceCol}>
+                  <Text style={styles.balanceValue}>{balance.push_sets}</Text>
+                  <Text style={styles.balanceColLabel}>PUSH</Text>
+                </View>
+                <View style={styles.balanceCol}>
+                  <Text style={styles.balanceValue}>{balance.pull_sets}</Text>
+                  <Text style={styles.balanceColLabel}>PULL</Text>
+                </View>
+                <View style={styles.balanceCol}>
+                  <Text style={styles.balanceValue}>{balance.legs_sets}</Text>
+                  <Text style={styles.balanceColLabel}>LEGS</Text>
+                </View>
+              </View>
+              {balance.balanced ? (
+                <Text style={styles.balanceOk}>✓ Well balanced — keep it up.</Text>
+              ) : (
+                balance.imbalances.map((im) => (
+                  <Text key={im.type} style={styles.balanceWarn}>
+                    ⚠ {im.message}
+                  </Text>
+                ))
+              )}
+            </View>
+          ) : null}
 
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>
@@ -235,17 +309,14 @@ export function ProgressScreen() {
       }
       renderItem={({ item }) => (
         <View style={styles.historyCard}>
-          <Text style={styles.historyDate}>
-            {dateLine(item.date)}
-            {item.duration_minutes ? ` · ${item.duration_minutes} MIN` : ''}
+          <Text style={styles.historyDate}>{dateLine(item.date)}</Text>
+          <Text style={styles.historyMuscles}>{item.title}</Text>
+          <Text style={styles.historySummary}>
+            {item.muscle_groups.length > 0
+              ? item.muscle_groups.join(', ')
+              : 'No muscle groups'}
+            {` · ${item.exercise_count} exercise${item.exercise_count === 1 ? '' : 's'}`}
           </Text>
-          <Text style={styles.historyMuscles}>{item.muscles.join(', ')}</Text>
-          <Text style={styles.historySummary}>{item.exercises_summary}</Text>
-          {item.pr_badge ? (
-            <View style={styles.prBadge}>
-              <Text style={styles.prBadgeText}>🏆 PR — {item.pr_badge}</Text>
-            </View>
-          ) : null}
         </View>
       )}
     />
@@ -313,6 +384,83 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     fontSize: 10,
     textAlign: 'center'
+  },
+  coachCard: {
+    marginTop: SPACING.md,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: SPACING.md
+  },
+  coachLabel: {
+    color: COLORS.accent,
+    fontFamily: FONT.display,
+    fontSize: 14,
+    letterSpacing: 1.4
+  },
+  coachText: {
+    marginTop: SPACING.xs,
+    color: COLORS.text,
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 20
+  },
+  recapStatsRow: {
+    marginTop: SPACING.sm,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.sm
+  },
+  recapStat: {
+    color: COLORS.muted,
+    fontFamily: FONT.bodyBold,
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
+  },
+  recapBest: {
+    marginTop: SPACING.sm,
+    color: COLORS.accent,
+    fontFamily: FONT.bodyBold,
+    fontSize: 13
+  },
+  balanceRow: {
+    marginTop: SPACING.sm,
+    flexDirection: 'row',
+    gap: SPACING.sm
+  },
+  balanceCol: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: COLORS.surface2,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.sm
+  },
+  balanceValue: {
+    color: COLORS.text,
+    fontFamily: FONT.display,
+    fontSize: 28,
+    letterSpacing: 1
+  },
+  balanceColLabel: {
+    color: COLORS.muted,
+    fontFamily: FONT.bodyBold,
+    fontSize: 10,
+    letterSpacing: 1
+  },
+  balanceOk: {
+    marginTop: SPACING.sm,
+    color: COLORS.success,
+    fontFamily: FONT.bodyMedium,
+    fontSize: 13
+  },
+  balanceWarn: {
+    marginTop: SPACING.sm,
+    color: COLORS.accent2,
+    fontFamily: FONT.bodyMedium,
+    fontSize: 13,
+    lineHeight: 18
   },
   chartCard: {
     marginTop: SPACING.md,
@@ -406,20 +554,5 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontFamily: FONT.body,
     fontSize: 13
-  },
-  prBadge: {
-    marginTop: SPACING.sm,
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    backgroundColor: '#2d3910',
-    borderWidth: 1,
-    borderColor: COLORS.accent,
-    paddingHorizontal: 10,
-    paddingVertical: 4
-  },
-  prBadgeText: {
-    color: COLORS.accent,
-    fontFamily: FONT.bodyBold,
-    fontSize: 11
   }
 });

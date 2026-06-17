@@ -86,19 +86,22 @@ export interface ExerciseDetail {
   } | null;
 }
 
+// Per-muscle slice of the overview (matches backend MuscleStats).
+export interface MuscleStats {
+  muscle: string;
+  total_sessions: number;
+  total_sets: number;
+  last_trained?: string | null;
+}
+
+// Matches the backend OverviewResponse exactly (app/progress/schemas.py).
 export interface ProgressOverview {
   total_sessions: number;
+  total_sets: number;
+  total_exercises: number;
   prs_this_month: number;
-  week_streak: number;
-  per_muscle_breakdown?: Array<{ muscle: string; count: number }>;
-  recent_sessions?: Array<{
-    id: string;
-    date: string;
-    duration_minutes?: number;
-    muscles: string[];
-    exercises_summary: string;
-    pr_badge?: string | null;
-  }>;
+  current_streak: number; // consecutive days with at least one session
+  muscle_breakdown: MuscleStats[];
 }
 
 export interface ExerciseProgressPoint {
@@ -251,6 +254,12 @@ export const deleteWorkout = async (id: string) => {
   await api.delete(`/workouts/${id}`);
 };
 
+// Reschedule a workout to another day (PATCH). Its logged sets move with it.
+export const moveWorkout = async (id: string, date: string) => {
+  const { data } = await api.patch<WorkoutDetail>(`/workouts/${id}`, { date });
+  return data;
+};
+
 export const getProgressOverview = async () => {
   const { data } = await api.get<ProgressOverview>('/progress/overview');
   return data;
@@ -276,12 +285,62 @@ export const getExerciseProgress = async (exerciseId: string, days = 120) => {
   return data?.history ?? [];
 };
 
+// ── Agentic coach: propose → confirm (human-in-the-loop) ──
+export interface PRBadge {
+  is_pr: boolean;
+  value: number;
+  prev_best?: number | null;
+}
+
+// A write the coach wants to make, awaiting the user's approval. `args` use human
+// references (exercise name, a date/"today", a workout title) — never raw IDs.
+export interface ProposedAction {
+  action_id: string;
+  type: string;
+  summary: string;
+  args: Record<string, unknown>;
+  status: string;
+  needs_clarification: boolean;
+  clarification?: string | null;
+}
+
+export interface ChatResponse {
+  reply: string;
+  conversation_id: string;
+  proposed_actions: ProposedAction[];
+}
+
+export interface ActionResult {
+  action_id: string;
+  // executed | failed | rejected | needs_clarification | not_found | already_executed
+  status: string;
+  created_id?: string | null;
+  detail?: string | null;
+  pr?: PRBadge | null;
+}
+
+export interface ChatConfirmResponse {
+  reply: string;
+  results: ActionResult[];
+}
+
 export const sendChat = async (payload: {
   message: string;
   conversation_id?: string;
   reference_labels?: string[];
 }) => {
-  const { data } = await api.post<{ reply: string; conversation_id: string }>('/chat', payload);
+  const { data } = await api.post<ChatResponse>('/chat', payload);
+  return data;
+};
+
+// Apply the proposed actions the user accepted (and record any they rejected).
+// Idempotent on the server: re-sending the same accepted_ids never double-writes.
+export const confirmChat = async (payload: {
+  conversation_id: string;
+  accepted_ids: string[];
+  rejected_ids?: string[];
+}) => {
+  const { data } = await api.post<ChatConfirmResponse>('/chat/confirm', payload);
   return data;
 };
 
@@ -345,6 +404,147 @@ export const updateConversation = async (
 ) => {
   const { data } = await api.put<Conversation>(`/conversations/${id}`, payload);
   return data;
+};
+
+// ── Coach namespace (read-only, deterministic, cached on the server) ──
+export interface CoachBriefing {
+  date: string;
+  has_workout: boolean;
+  title?: string | null;
+  text: string;
+  cached: boolean;
+}
+
+export const getBriefing = async () => {
+  const { data } = await api.get<CoachBriefing>('/coach/briefing');
+  return data;
+};
+
+export interface CoachRecap {
+  week: string;
+  total_sessions: number;
+  total_sets: number;
+  prs: number;
+  streak: number;
+  best_lift?: string | null;
+  text: string;
+  cached: boolean;
+}
+
+export const getRecap = async (week?: string) => {
+  const { data } = await api.get<CoachRecap>('/coach/recap', {
+    params: week ? { week } : undefined
+  });
+  return data;
+};
+
+export interface ProgressionItem {
+  exercise_id: string;
+  exercise_name: string;
+  action: string; // increase_weight | add_reps | hold | baseline
+  current_weight?: number | null;
+  suggested_weight?: number | null;
+  target_reps?: number | null;
+  reason: string;
+}
+
+export interface CoachProgression {
+  workout_id: string;
+  items: ProgressionItem[];
+}
+
+// workoutRef may be 'today', a YYYY-MM-DD date, or the workout's title.
+export const getProgression = async (workoutRef: string) => {
+  const { data } = await api.get<CoachProgression>('/coach/progression', {
+    params: { workout_ref: workoutRef }
+  });
+  return data;
+};
+
+export interface BalanceImbalance {
+  type: string;
+  message: string;
+  suggest_muscles: string[];
+}
+
+export interface CoachBalance {
+  push_sets: number;
+  pull_sets: number;
+  legs_sets: number;
+  push_pull_ratio?: number | null;
+  imbalances: BalanceImbalance[];
+  balanced: boolean;
+}
+
+export const getBalance = async () => {
+  const { data } = await api.get<CoachBalance>('/coach/balance');
+  return data;
+};
+
+// ── Goals (CRUD + deterministic trajectory) ──
+export type GoalStatus = 'active' | 'achieved' | 'abandoned';
+
+export interface Goal {
+  id: string;
+  metric: string;
+  exercise_id?: string | null;
+  exercise_name?: string | null;
+  target_value: number;
+  target_date: string;
+  status: GoalStatus;
+  created_at: string;
+}
+
+export interface GoalTrajectory {
+  goal_id: string;
+  status: string; // no_data | on_track | off_track | achieved
+  on_track: boolean;
+  current_best?: number | null;
+  current?: number | null;
+  slope_per_week: number;
+  projected_value?: number | null;
+  days_remaining: number;
+  target_value: number;
+  verdict: string;
+}
+
+export const getGoals = async (status?: GoalStatus) => {
+  const { data } = await api.get<Goal[]>('/goals', {
+    params: status ? { status } : undefined
+  });
+  return data;
+};
+
+export const createGoal = async (payload: {
+  metric?: string;
+  exercise_id?: string;
+  target_value: number;
+  target_date: string; // YYYY-MM-DD
+}) => {
+  const { data } = await api.post<Goal>('/goals', payload);
+  return data;
+};
+
+export const getGoal = async (id: string) => {
+  const { data } = await api.get<Goal>(`/goals/${id}`);
+  return data;
+};
+
+export const getGoalTrajectory = async (id: string) => {
+  const { data } = await api.get<GoalTrajectory>(`/goals/${id}/trajectory`);
+  return data;
+};
+
+export const updateGoal = async (
+  id: string,
+  payload: { target_value?: number; target_date?: string; status?: GoalStatus }
+) => {
+  const { data } = await api.put<Goal>(`/goals/${id}`, payload);
+  return data;
+};
+
+export const deleteGoal = async (id: string) => {
+  await api.delete(`/goals/${id}`);
 };
 
 export const getApiErrorMessage = (error: unknown, fallback = 'Something went wrong') => {

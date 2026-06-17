@@ -16,6 +16,7 @@ import { SessionScreen } from '../screens/SessionScreen';
 import { ProgressScreen } from '../screens/ProgressScreen';
 import { ChatScreen } from '../screens/ChatScreen';
 import { ConversationsScreen } from '../screens/ConversationsScreen';
+import { GoalsScreen } from '../screens/GoalsScreen';
 import {
   AuthStackParamList,
   CoachStackParamList,
@@ -75,6 +76,7 @@ function CoachStackNavigator() {
     <CoachStack.Navigator screenOptions={{ headerShown: false }}>
       <CoachStack.Screen name="Chat" component={ChatScreen} />
       <CoachStack.Screen name="Conversations" component={ConversationsScreen} />
+      <CoachStack.Screen name="Goals" component={GoalsScreen} />
     </CoachStack.Navigator>
   );
 }

@@ -21,16 +21,33 @@ import { imageUrlFor, searchExercises } from '../data/exerciseLibrary';
 import { HomeStackParamList } from '../navigation/types';
 import {
   addMuscleGroup,
+  CoachProgression,
   createExercise,
   deleteExercise,
   getApiErrorMessage,
+  getProgression,
   getWorkout,
+  ProgressionItem,
   removeMuscleGroup,
   updateWorkout,
   WorkoutDetail
 } from '../services/api';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Workout'>;
+
+// One-line "next target" phrasing from a deterministic progression suggestion.
+function progressionTarget(item: ProgressionItem): string {
+  switch (item.action) {
+    case 'increase_weight':
+      return `↑ ${item.suggested_weight}kg × ${item.target_reps}`;
+    case 'add_reps':
+      return `↑ ${item.target_reps} reps (bodyweight)`;
+    case 'hold':
+      return `Hold ${item.current_weight}kg × ${item.target_reps}`;
+    default:
+      return 'Log a baseline';
+  }
+}
 
 // Mirrors app.muscles.constants.MUSCLE_GROUPS on the backend.
 const MUSCLE_OPTIONS: { muscle: string; emoji: string }[] = [
@@ -48,9 +65,12 @@ const emojiFor = (muscle: string) =>
   MUSCLE_OPTIONS.find((m) => m.muscle === muscle)?.emoji ?? '🏋️';
 
 export function WorkoutDetailScreen({ route, navigation }: Props) {
-  const { workoutId } = route.params;
+  const { workoutId, date } = route.params;
   const [detail, setDetail] = useState<WorkoutDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  // Coach's deterministic next-session targets for this workout (Feature 2).
+  const [progression, setProgression] = useState<CoachProgression | null>(null);
+  const [showProgression, setShowProgression] = useState(false);
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
@@ -78,12 +98,20 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
       const data = await getWorkout(workoutId);
       setDetail(data);
       setTitleDraft(data.title);
+
+      // Coach next-session targets — resolve the workout by its date. Non-fatal:
+      // a missing/empty result just hides the card.
+      getProgression(date.slice(0, 10))
+        .then((prog) =>
+          setProgression(prog.items.length ? prog : null)
+        )
+        .catch(() => setProgression(null));
     } catch (error) {
       Alert.alert('Could not load session', getApiErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  }, [workoutId]);
+  }, [workoutId, date]);
 
   useFocusEffect(
     useCallback(() => {
@@ -240,6 +268,31 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
             <Text style={styles.editHint}>Tap title to rename</Text>
           </ScalePressable>
         )}
+
+        {progression && progression.items.length > 0 ? (
+          <View style={styles.coachCard}>
+            <ScalePressable
+              style={styles.coachHeader}
+              onPress={() => setShowProgression((v) => !v)}
+            >
+              <Text style={styles.coachTitle}>🏋️ COACH — NEXT TARGETS</Text>
+              <Text style={styles.coachChevron}>{showProgression ? '▾' : '▸'}</Text>
+            </ScalePressable>
+            {showProgression ? (
+              <View style={styles.coachBody}>
+                {progression.items.map((item) => (
+                  <View key={item.exercise_id} style={styles.coachItem}>
+                    <View style={styles.coachItemMain}>
+                      <Text style={styles.coachItemName}>{item.exercise_name}</Text>
+                      <Text style={styles.coachItemReason}>{item.reason}</Text>
+                    </View>
+                    <Text style={styles.coachItemTarget}>{progressionTarget(item)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         <Text style={styles.sectionLabel}>Muscle groups</Text>
 
@@ -517,6 +570,67 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontFamily: FONT.bodyMedium,
     fontSize: 16
+  },
+  coachCard: {
+    marginTop: SPACING.lg,
+    backgroundColor: COLORS.surface,
+    borderColor: COLORS.accent,
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden'
+  },
+  coachHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: SPACING.md
+  },
+  coachTitle: {
+    color: COLORS.accent,
+    fontFamily: FONT.display,
+    fontSize: 16,
+    letterSpacing: 1.2
+  },
+  coachChevron: {
+    color: COLORS.accent,
+    fontSize: 18,
+    fontFamily: FONT.bodyBold
+  },
+  coachBody: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    padding: SPACING.sm
+  },
+  coachItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    backgroundColor: COLORS.surface2,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    marginTop: SPACING.xs
+  },
+  coachItemMain: {
+    flex: 1
+  },
+  coachItemName: {
+    color: COLORS.text,
+    fontFamily: FONT.bodyBold,
+    fontSize: 15
+  },
+  coachItemReason: {
+    color: COLORS.muted,
+    fontFamily: FONT.body,
+    fontSize: 12,
+    marginTop: 2
+  },
+  coachItemTarget: {
+    color: COLORS.accent,
+    fontFamily: FONT.bodyBold,
+    fontSize: 14,
+    textAlign: 'right',
+    flexShrink: 0,
+    maxWidth: 120
   },
   emptyWrap: {
     paddingVertical: SPACING.lg,

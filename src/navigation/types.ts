@@ -25,4 +25,5 @@ export type MainTabParamList = {
 export type CoachStackParamList = {
   Chat: { conversationId?: string } | undefined;
   Conversations: undefined;
+  Goals: undefined;
 };
