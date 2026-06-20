@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,14 +21,18 @@ import { imageUrlFor, searchExercises } from '../data/exerciseLibrary';
 import { HomeStackParamList } from '../navigation/types';
 import {
   addMuscleGroup,
+  addWorkoutExercise,
   CoachProgression,
-  createExercise,
-  deleteExercise,
+  Exercise,
   getApiErrorMessage,
+  getExercisesByMuscle,
   getProgression,
   getWorkout,
+  LibraryExercise,
   ProgressionItem,
   removeMuscleGroup,
+  removeWorkoutExercise,
+  searchLibrary,
   updateWorkout,
   WorkoutDetail
 } from '../services/api';
@@ -82,16 +86,96 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
   const [addMuscle, setAddMuscle] = useState<string | null>(null);
   const [exName, setExName] = useState('');
   const [exEmoji, setExEmoji] = useState('🏋️');
-  // Image URL chosen from the exercise library (null until one is picked).
+  // Image URL chosen from a suggestion (null for none, or an emoji-only pick).
   const [exImage, setExImage] = useState<string | null>(null);
+  // True once a suggestion (yours or library) is chosen, so we show its preview
+  // instead of the results list — even for picks that have no illustration.
+  const [picked, setPicked] = useState(false);
   const [savingExercise, setSavingExercise] = useState(false);
 
-  // Library suggestions for the add-exercise search. Hidden once an exercise is
-  // picked (its image is set); reappears when the name is edited again.
-  const libraryResults = useMemo(() => {
-    if (!addMuscle || exImage) return [];
-    return searchExercises(exName, addMuscle, 8);
-  }, [addMuscle, exName, exImage]);
+  // The user's existing exercises for the open muscle group ("done before"),
+  // fetched once when the modal opens and suggested above the library list.
+  const [myExercisesAll, setMyExercisesAll] = useState<Exercise[]>([]);
+
+  useEffect(() => {
+    if (!addMuscle) {
+      setMyExercisesAll([]);
+      return;
+    }
+    let cancelled = false;
+    getExercisesByMuscle(addMuscle)
+      .then((list) => {
+        if (!cancelled) setMyExercisesAll(list);
+      })
+      .catch(() => {
+        if (!cancelled) setMyExercisesAll([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [addMuscle]);
+
+  // Library suggestions for the add-exercise search. Hidden once a suggestion is
+  // picked; reappears when the name is edited again.
+  const [libraryResults, setLibraryResults] = useState<LibraryExercise[]>([]);
+
+  useEffect(() => {
+    if (!addMuscle || picked) {
+      setLibraryResults([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const results = await searchLibrary(exName, addMuscle, 8);
+        if (!cancelled) setLibraryResults(results);
+      } catch {
+        // Offline / server error → fall back to the bundled library so the
+        // picker still works with no signal at the gym.
+        if (!cancelled) setLibraryResults(searchExercises(exName, addMuscle, 8));
+      }
+    }, 200); // debounce keystrokes
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [addMuscle, exName, picked]);
+
+  // Your matching exercises, shown first: name-filtered, those trained before on
+  // top, excluding ones already in this session's block for the muscle.
+  const myResults = useMemo(() => {
+    if (!addMuscle || picked) return [];
+    const inBlock = new Set(
+      (detail?.muscle_groups.find((b) => b.muscle === addMuscle)?.exercises ?? []).map(
+        (e) => e.name.trim().toLowerCase()
+      )
+    );
+    const terms = exName
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter(Boolean);
+    return myExercisesAll
+      .filter((e) => !inBlock.has(e.name.trim().toLowerCase()))
+      .filter((e) => {
+        const n = e.name.toLowerCase();
+        return terms.every((t) => n.includes(t));
+      })
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.last_session_summary)) -
+          Number(Boolean(a.last_session_summary))
+      )
+      .slice(0, 6);
+  }, [addMuscle, picked, exName, myExercisesAll, detail]);
+
+  // Drop library entries that duplicate one of your exercises (by name).
+  const visibleLibrary = useMemo(() => {
+    const mine = new Set(myResults.map((e) => e.name.trim().toLowerCase()));
+    return libraryResults.filter((e) => !mine.has(e.name.trim().toLowerCase()));
+  }, [libraryResults, myResults]);
 
   const load = useCallback(async () => {
     try {
@@ -181,17 +265,30 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
     setExName('');
     setExEmoji('🏋️');
     setExImage(null);
+    setPicked(false);
   };
 
-  // Editing the name invalidates a previously picked library image.
+  // Editing the name invalidates a previously picked suggestion.
   const onChangeExName = (text: string) => {
     setExName(text);
-    if (exImage) setExImage(null);
+    if (picked) {
+      setPicked(false);
+      setExImage(null);
+    }
   };
 
   const pickLibraryExercise = (name: string, image: string | null) => {
     setExName(name);
     setExImage(image);
+    setPicked(true);
+  };
+
+  // Quick-pick one of your existing exercises (keeps its image and emoji).
+  const pickMyExercise = (ex: Exercise) => {
+    setExName(ex.name);
+    setExImage(ex.image_url ?? null);
+    setExEmoji(ex.emoji || '🏋️');
+    setPicked(true);
   };
 
   const saveExercise = async () => {
@@ -201,14 +298,15 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
     }
     setSavingExercise(true);
     try {
-      await createExercise({
+      const updated = await addWorkoutExercise(workoutId, {
         muscle: addMuscle,
         name: exName.trim(),
         emoji: exEmoji.trim() || '🏋️',
         image_url: exImage ?? undefined
       });
+      setDetail(updated);
+      setExpanded((prev) => new Set(prev).add(addMuscle));
       setAddMuscle(null);
-      await load();
     } catch (error) {
       Alert.alert('Could not add exercise', getApiErrorMessage(error));
     } finally {
@@ -217,21 +315,25 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
   };
 
   const confirmDeleteExercise = (exerciseId: string, name: string) => {
-    Alert.alert('Delete exercise?', `${name} and all its logged sets will be removed.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteExercise(exerciseId);
-            await load();
-          } catch (error) {
-            Alert.alert('Delete failed', getApiErrorMessage(error));
+    Alert.alert(
+      'Remove from this session?',
+      `${name} will be removed from this session and any sets you logged for it here will be deleted. Its history in other sessions stays.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const updated = await removeWorkoutExercise(workoutId, exerciseId);
+              setDetail(updated);
+            } catch (error) {
+              Alert.alert('Could not remove', getApiErrorMessage(error));
+            }
           }
         }
-      }
-    ]);
+      ]
+    );
   };
 
   if (loading || !detail) {
@@ -434,34 +536,73 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
                   autoFocus
                 />
 
-                {exImage ? (
-                  // A library exercise is selected — show its illustration.
+                {picked ? (
+                  // A suggestion is selected — show its illustration (or emoji).
                   <View style={styles.selectedPreview}>
-                    <Image source={{ uri: exImage }} style={styles.previewImage} />
+                    {exImage ? (
+                      <Image source={{ uri: exImage }} style={styles.previewImage} />
+                    ) : (
+                      <View style={[styles.previewImage, styles.emojiThumb]}>
+                        <Text style={styles.previewEmoji}>{exEmoji}</Text>
+                      </View>
+                    )}
                     <View style={styles.previewMain}>
                       <Text style={styles.previewName} numberOfLines={2}>
                         {exName}
                       </Text>
-                      <Text style={styles.previewHint}>Illustrated exercise</Text>
+                      <Text style={styles.previewHint}>Selected exercise</Text>
                     </View>
                     <ScalePressable
                       style={styles.previewClear}
-                      onPress={() => setExImage(null)}
+                      onPress={() => {
+                        setPicked(false);
+                        setExImage(null);
+                      }}
                     >
                       <Text style={styles.previewClearText}>✕</Text>
                     </ScalePressable>
                   </View>
-                ) : libraryResults.length > 0 ? (
+                ) : myResults.length > 0 || visibleLibrary.length > 0 ? (
                   <ScrollView
                     style={styles.results}
                     keyboardShouldPersistTaps="handled"
                     nestedScrollEnabled
                   >
-                    {libraryResults.map((item) => {
+                    {myResults.length > 0 ? (
+                      <Text style={styles.resultsSection}>YOUR EXERCISES</Text>
+                    ) : null}
+                    {myResults.map((item) => (
+                      <ScalePressable
+                        key={`mine-${item.id}`}
+                        style={styles.resultRow}
+                        onPress={() => pickMyExercise(item)}
+                      >
+                        {item.image_url ? (
+                          <Image source={{ uri: item.image_url }} style={styles.resultThumb} />
+                        ) : (
+                          <View style={[styles.resultThumb, styles.emojiThumb]}>
+                            <Text style={styles.resultEmoji}>{item.emoji || '🏋️'}</Text>
+                          </View>
+                        )}
+                        <View style={styles.resultMain}>
+                          <Text style={styles.resultName} numberOfLines={1}>
+                            {item.name}
+                          </Text>
+                          <Text style={styles.resultMeta} numberOfLines={1}>
+                            {item.last_session_summary ?? 'Your exercise'}
+                          </Text>
+                        </View>
+                      </ScalePressable>
+                    ))}
+
+                    {myResults.length > 0 && visibleLibrary.length > 0 ? (
+                      <Text style={styles.resultsSection}>FROM LIBRARY</Text>
+                    ) : null}
+                    {visibleLibrary.map((item) => {
                       const uri = imageUrlFor(item.img);
                       return (
                         <ScalePressable
-                          key={item.id}
+                          key={`lib-${item.id}`}
                           style={styles.resultRow}
                           onPress={() => pickLibraryExercise(item.name, uri)}
                         >
@@ -485,7 +626,7 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
                     })}
                   </ScrollView>
                 ) : (
-                  // No library match — fall back to a manual emoji for a custom name.
+                  // No match anywhere — fall back to a manual emoji for a custom name.
                   <>
                     <Text style={styles.label}>EMOJI ICON</Text>
                     <TextInput
@@ -877,6 +1018,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textTransform: 'capitalize',
     marginTop: 1
+  },
+  resultsSection: {
+    color: COLORS.muted,
+    fontFamily: FONT.bodyBold,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    paddingHorizontal: SPACING.sm,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.xs
+  },
+  emojiThumb: {
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  resultEmoji: {
+    fontSize: 22
+  },
+  previewEmoji: {
+    fontSize: 28
   },
   selectedPreview: {
     flexDirection: 'row',

@@ -46,6 +46,9 @@ export function SessionScreen({ route, navigation }: Props) {
   const [sets, setSets] = useState<EditableSet[]>([emptySet(1)]);
   const [notes, setNotes] = useState('');
   const [personalBest, setPersonalBest] = useState<number>(0);
+  // Read-only "last time" reference, e.g. "15kg×12 · 15kg×12 · 15kg×12". Shown for
+  // context only — the inputs always start empty so you log fresh numbers yourself.
+  const [lastTimeHint, setLastTimeHint] = useState<string | null>(null);
 
   useEffect(() => {
     const loadExercise = async () => {
@@ -54,17 +57,15 @@ export function SessionScreen({ route, navigation }: Props) {
         const detail = await getExercise(exerciseId);
         setPersonalBest(detail.personal_best || 0);
 
-        if (detail.last_session?.sets?.length) {
-          const seeded = detail.last_session.sets.map((s) => ({
-            id: `${Date.now()}-${s.set_number}-${Math.random()}`,
-            set_number: s.set_number,
-            weight_kg: String(s.weight_kg),
-            reps: String(s.reps)
-          }));
-          setSets(seeded);
-        } else {
-          setSets([emptySet(1)]);
-        }
+        // Always start with a single blank set — never pre-fill from history.
+        setSets([emptySet(1)]);
+
+        const lastSets = detail.last_session?.sets ?? [];
+        setLastTimeHint(
+          lastSets.length
+            ? lastSets.map((s) => `${s.weight_kg}kg×${s.reps}`).join(' · ')
+            : null
+        );
       } catch (error) {
         Alert.alert('Could not load exercise', getApiErrorMessage(error));
       } finally {
@@ -185,6 +186,13 @@ export function SessionScreen({ route, navigation }: Props) {
             {newPr ? 'Amazing — keep going!' : 'Keep pushing to beat it'}
           </Text>
         </View>
+
+        {lastTimeHint ? (
+          <View style={styles.lastTime}>
+            <Text style={styles.lastTimeLabel}>LAST TIME</Text>
+            <Text style={styles.lastTimeValue}>{lastTimeHint}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.tableHeader}>
           <Text style={[styles.headerCell, { flex: 0.9 }]}>SET</Text>
@@ -313,6 +321,25 @@ const styles = StyleSheet.create({
     marginTop: 2,
     color: COLORS.muted,
     fontFamily: FONT.body,
+    fontSize: 13
+  },
+  lastTime: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.md,
+    paddingHorizontal: SPACING.sm
+  },
+  lastTimeLabel: {
+    color: COLORS.muted,
+    fontFamily: FONT.bodyBold,
+    fontSize: 11,
+    letterSpacing: 1.2
+  },
+  lastTimeValue: {
+    flex: 1,
+    color: COLORS.text,
+    fontFamily: FONT.bodyMedium,
     fontSize: 13
   },
   tableHeader: {

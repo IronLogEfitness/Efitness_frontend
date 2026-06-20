@@ -171,6 +171,33 @@ export const deleteExercise = async (id: string) => {
   await api.delete(`/exercises/${id}`);
 };
 
+// ── Exercise library (read-only catalog for the add-exercise picker) ──
+// Mirrors one entry of the backend's bundled free-exercise-db dataset. The same
+// shape is produced by the local offline fallback (src/data/exerciseLibrary.ts),
+// so callers can swap between them transparently.
+export interface LibraryExercise {
+  id: string;
+  name: string;
+  equipment: string | null;
+  category: string | null;
+  muscles: string[];
+  img: string | null;
+}
+
+// Search the catalog, filtered/ranked by muscle group (the backend is the source
+// of truth). An empty query returns the muscle's exercises as defaults. Callers
+// should fall back to the bundled library if this fails (e.g. offline).
+export const searchLibrary = async (
+  query: string,
+  muscle: string | null,
+  limit = 30
+) => {
+  const { data } = await api.get<LibraryExercise[]>('/exercise-library', {
+    params: { q: query, muscle: muscle ?? undefined, limit }
+  });
+  return data;
+};
+
 export const createSession = async (payload: {
   exercise_id: string;
   workout_id?: string;
@@ -246,6 +273,27 @@ export const addMuscleGroup = async (id: string, muscle: string) => {
 export const removeMuscleGroup = async (id: string, muscle: string) => {
   const { data } = await api.delete<WorkoutDetail>(
     `/workouts/${id}/muscle-groups/${muscle}`
+  );
+  return data;
+};
+
+// Add an exercise to ONE workout. The backend finds-or-creates it in the shared
+// catalog (so its tracking history is preserved) and links it to this workout only.
+export const addWorkoutExercise = async (
+  workoutId: string,
+  payload: { muscle: string; name: string; emoji: string; image_url?: string }
+) => {
+  const { data } = await api.post<WorkoutDetail>(
+    `/workouts/${workoutId}/exercises`,
+    payload
+  );
+  return data;
+};
+
+// Remove an exercise from this workout only (its history in other sessions stays).
+export const removeWorkoutExercise = async (workoutId: string, exerciseId: string) => {
+  const { data } = await api.delete<WorkoutDetail>(
+    `/workouts/${workoutId}/exercises/${exerciseId}`
   );
   return data;
 };
