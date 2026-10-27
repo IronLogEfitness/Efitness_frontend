@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from 'react';
 import {
   getApiErrorMessage,
   login as apiLogin,
@@ -62,36 +69,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     const response = await apiLogin(email, password);
     await tokenStorage.save(response.access_token);
     setToken(response.access_token);
     const profile = await me();
     setUser(profile);
-  };
+  }, []);
 
-  const register = async (name: string, email: string, password: string) => {
-    const response = await apiRegister(name, email, password);
-    await tokenStorage.save(response.access_token);
-    setToken(response.access_token);
-    const profile = await me();
-    setUser(profile);
-  };
+  const register = useCallback(
+    async (name: string, email: string, password: string) => {
+      const response = await apiRegister(name, email, password);
+      await tokenStorage.save(response.access_token);
+      setToken(response.access_token);
+      const profile = await me();
+      setUser(profile);
+    },
+    []
+  );
 
-  const updateProfile = async (payload: UpdateProfilePayload) => {
+  const updateProfile = useCallback(async (payload: UpdateProfilePayload) => {
     const profile = await apiUpdateProfile(payload);
     setUser(profile);
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await tokenStorage.remove();
     setToken(null);
     setUser(null);
-  };
+  }, []);
 
+  // The callbacks are stable (useCallback), so the context value only changes
+  // when the auth state does — satisfying exhaustive-deps and avoiding needless
+  // re-renders of every consumer.
   const value = useMemo(
     () => ({ user, token, loading, login, register, updateProfile, logout }),
-    [user, token, loading]
+    [user, token, loading, login, register, updateProfile, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
