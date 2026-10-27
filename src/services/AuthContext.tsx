@@ -4,6 +4,7 @@ import {
   login as apiLogin,
   me,
   register as apiRegister,
+  setUnauthorizedHandler,
   tokenStorage,
   updateProfile as apiUpdateProfile,
   UpdateProfilePayload,
@@ -48,6 +49,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     rehydrate();
+  }, []);
+
+  // Any 401 on an authenticated request (expired / missing token) drops the user
+  // back to the auth stack. The API layer already cleared the stored token; here
+  // we clear the in-memory session so RootNavigator renders the auth stack.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setToken(null);
+      setUser(null);
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   const login = async (email: string, password: string) => {
