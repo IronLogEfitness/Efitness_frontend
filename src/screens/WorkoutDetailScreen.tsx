@@ -20,22 +20,22 @@ import { ScalePressable } from '../components/ScalePressable';
 import { imageUrlFor, searchExercises } from '../data/exerciseLibrary';
 import { HomeStackParamList } from '../navigation/types';
 import {
-  addMuscleGroup,
-  addWorkoutExercise,
-  CoachProgression,
   Exercise,
   getApiErrorMessage,
-  getExercisesByMuscle,
-  getProgression,
-  getWorkout,
   LibraryExercise,
   ProgressionItem,
-  removeMuscleGroup,
-  removeWorkoutExercise,
-  searchLibrary,
-  updateWorkout,
-  WorkoutDetail
+  searchLibrary
 } from '../services/api';
+import { useProgression } from '../hooks/useCoach';
+import { useExercisesByMuscle } from '../hooks/useExercises';
+import {
+  useAddMuscleGroup,
+  useAddWorkoutExercise,
+  useRemoveMuscleGroup,
+  useRemoveWorkoutExercise,
+  useUpdateWorkout,
+  useWorkout
+} from '../hooks/useWorkouts';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Workout'>;
 
@@ -70,11 +70,23 @@ const emojiFor = (muscle: string) =>
 
 export function WorkoutDetailScreen({ route, navigation }: Props) {
   const { workoutId, date } = route.params;
-  const [detail, setDetail] = useState<WorkoutDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  // Coach's deterministic next-session targets for this workout (Feature 2).
-  const [progression, setProgression] = useState<CoachProgression | null>(null);
+
+  const workoutQuery = useWorkout(workoutId);
+  const detail = workoutQuery.data ?? null;
+  const loading = workoutQuery.isPending;
+
+  // Coach's deterministic next-session targets for this workout (Feature 2),
+  // resolved by the workout's date. Non-fatal: an empty result hides the card.
+  const progressionQuery = useProgression(date.slice(0, 10));
+  const progression =
+    progressionQuery.data && progressionQuery.data.items.length ? progressionQuery.data : null;
   const [showProgression, setShowProgression] = useState(false);
+
+  const updateWorkoutMutation = useUpdateWorkout(workoutId);
+  const addMuscleMutation = useAddMuscleGroup(workoutId);
+  const removeMuscleMutation = useRemoveMuscleGroup(workoutId);
+  const addExerciseMutation = useAddWorkoutExercise(workoutId);
+  const removeExerciseMutation = useRemoveWorkoutExercise(workoutId);
 
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
@@ -91,29 +103,11 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
   // True once a suggestion (yours or library) is chosen, so we show its preview
   // instead of the results list — even for picks that have no illustration.
   const [picked, setPicked] = useState(false);
-  const [savingExercise, setSavingExercise] = useState(false);
+  const savingExercise = addExerciseMutation.isPending;
 
   // The user's existing exercises for the open muscle group ("done before"),
-  // fetched once when the modal opens and suggested above the library list.
-  const [myExercisesAll, setMyExercisesAll] = useState<Exercise[]>([]);
-
-  useEffect(() => {
-    if (!addMuscle) {
-      setMyExercisesAll([]);
-      return;
-    }
-    let cancelled = false;
-    getExercisesByMuscle(addMuscle)
-      .then((list) => {
-        if (!cancelled) setMyExercisesAll(list);
-      })
-      .catch(() => {
-        if (!cancelled) setMyExercisesAll([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [addMuscle]);
+  // suggested above the library list. Fetched only while the modal is open.
+  const myExercisesAll: Exercise[] = useExercisesByMuscle(addMuscle).data ?? [];
 
   // Library suggestions for the add-exercise search. Hidden once a suggestion is
   // picked; reappears when the name is edited again.
@@ -177,31 +171,29 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
     return libraryResults.filter((e) => !mine.has(e.name.trim().toLowerCase()));
   }, [libraryResults, myResults]);
 
-  const load = useCallback(async () => {
-    try {
-      const data = await getWorkout(workoutId);
-      setDetail(data);
-      setTitleDraft(data.title);
-
-      // Coach next-session targets — resolve the workout by its date. Non-fatal:
-      // a missing/empty result just hides the card.
-      getProgression(date.slice(0, 10))
-        .then((prog) =>
-          setProgression(prog.items.length ? prog : null)
-        )
-        .catch(() => setProgression(null));
-    } catch (error) {
-      Alert.alert('Could not load session', getApiErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, [workoutId, date]);
-
+  // Refetch the detail (and the coach targets) when the screen regains focus,
+  // e.g. after logging sets on the session screen.
+  const refetchWorkout = workoutQuery.refetch;
+  const refetchProgression = progressionQuery.refetch;
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      refetchWorkout();
+      refetchProgression();
+    }, [refetchWorkout, refetchProgression])
   );
+
+  useEffect(() => {
+    if (workoutQuery.isError) {
+      Alert.alert('Could not load session', getApiErrorMessage(workoutQuery.error));
+    }
+  }, [workoutQuery.isError, workoutQuery.error]);
+
+  // Keep the title draft in sync with the loaded title while not actively editing.
+  useEffect(() => {
+    if (detail && !editingTitle) {
+      setTitleDraft(detail.title);
+    }
+  }, [detail, editingTitle]);
 
   const saveTitle = async () => {
     const next = titleDraft.trim();
@@ -211,8 +203,7 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
       return;
     }
     try {
-      const updated = await updateWorkout(workoutId, { title: next });
-      setDetail(updated);
+      await updateWorkoutMutation.mutateAsync({ title: next });
       setEditingTitle(false);
     } catch (error) {
       Alert.alert('Could not rename', getApiErrorMessage(error));
@@ -234,8 +225,7 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
   const pickMuscle = async (muscle: string) => {
     setShowMusclePicker(false);
     try {
-      const updated = await addMuscleGroup(workoutId, muscle);
-      setDetail(updated);
+      await addMuscleMutation.mutateAsync(muscle);
       setExpanded((prev) => new Set(prev).add(muscle));
     } catch (error) {
       Alert.alert('Could not add muscle group', getApiErrorMessage(error));
@@ -250,8 +240,7 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
         style: 'destructive',
         onPress: async () => {
           try {
-            const updated = await removeMuscleGroup(workoutId, muscle);
-            setDetail(updated);
+            await removeMuscleMutation.mutateAsync(muscle);
           } catch (error) {
             Alert.alert('Could not remove', getApiErrorMessage(error));
           }
@@ -296,21 +285,17 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
       Alert.alert('Missing name', 'Please enter an exercise name.');
       return;
     }
-    setSavingExercise(true);
     try {
-      const updated = await addWorkoutExercise(workoutId, {
+      await addExerciseMutation.mutateAsync({
         muscle: addMuscle,
         name: exName.trim(),
         emoji: exEmoji.trim() || '🏋️',
         image_url: exImage ?? undefined
       });
-      setDetail(updated);
       setExpanded((prev) => new Set(prev).add(addMuscle));
       setAddMuscle(null);
     } catch (error) {
       Alert.alert('Could not add exercise', getApiErrorMessage(error));
-    } finally {
-      setSavingExercise(false);
     }
   };
 
@@ -325,8 +310,7 @@ export function WorkoutDetailScreen({ route, navigation }: Props) {
           style: 'destructive',
           onPress: async () => {
             try {
-              const updated = await removeWorkoutExercise(workoutId, exerciseId);
-              setDetail(updated);
+              await removeExerciseMutation.mutateAsync(exerciseId);
             } catch (error) {
               Alert.alert('Could not remove', getApiErrorMessage(error));
             }
