@@ -13,12 +13,9 @@ import {
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
-import {
-  createSession,
-  getApiErrorMessage,
-  getExercise,
-  SessionSet
-} from '../services/api';
+import { getApiErrorMessage, SessionSet } from '../services/api';
+import { useExercise } from '../hooks/useExercises';
+import { useCreateSession } from '../hooks/useWorkouts';
 import { HomeStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Session'>;
@@ -41,40 +38,32 @@ function emptySet(nextNumber: number): EditableSet {
 
 export function SessionScreen({ route, navigation }: Props) {
   const { exerciseId, exerciseName, emoji, workoutId } = route.params;
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  // Inputs always start with a single blank set — never pre-filled from history.
   const [sets, setSets] = useState<EditableSet[]>([emptySet(1)]);
   const [notes, setNotes] = useState('');
-  const [personalBest, setPersonalBest] = useState<number>(0);
+
+  const exerciseQuery = useExercise(exerciseId);
+  const detail = exerciseQuery.data;
+  const loading = exerciseQuery.isPending;
+  const personalBest = detail?.personal_best || 0;
+
   // Read-only "last time" reference, e.g. "15kg×12 · 15kg×12 · 15kg×12". Shown for
   // context only — the inputs always start empty so you log fresh numbers yourself.
-  const [lastTimeHint, setLastTimeHint] = useState<string | null>(null);
+  const lastTimeHint = useMemo(() => {
+    const lastSets = detail?.last_session?.sets ?? [];
+    return lastSets.length
+      ? lastSets.map((s) => `${s.weight_kg}kg×${s.reps}`).join(' · ')
+      : null;
+  }, [detail]);
+
+  const createSessionMutation = useCreateSession();
+  const saving = createSessionMutation.isPending;
 
   useEffect(() => {
-    const loadExercise = async () => {
-      setLoading(true);
-      try {
-        const detail = await getExercise(exerciseId);
-        setPersonalBest(detail.personal_best || 0);
-
-        // Always start with a single blank set — never pre-fill from history.
-        setSets([emptySet(1)]);
-
-        const lastSets = detail.last_session?.sets ?? [];
-        setLastTimeHint(
-          lastSets.length
-            ? lastSets.map((s) => `${s.weight_kg}kg×${s.reps}`).join(' · ')
-            : null
-        );
-      } catch (error) {
-        Alert.alert('Could not load exercise', getApiErrorMessage(error));
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadExercise();
-  }, [exerciseId]);
+    if (exerciseQuery.isError) {
+      Alert.alert('Could not load exercise', getApiErrorMessage(exerciseQuery.error));
+    }
+  }, [exerciseQuery.isError, exerciseQuery.error]);
 
   const liveMaxWeight = useMemo(() => {
     return sets.reduce((max, current) => {
@@ -127,9 +116,8 @@ export function SessionScreen({ route, navigation }: Props) {
       });
     }
 
-    setSaving(true);
     try {
-      await createSession({
+      await createSessionMutation.mutateAsync({
         exercise_id: exerciseId,
         workout_id: workoutId,
         sets: parsed,
@@ -140,8 +128,6 @@ export function SessionScreen({ route, navigation }: Props) {
       ]);
     } catch (error) {
       Alert.alert('Could not save session', getApiErrorMessage(error));
-    } finally {
-      setSaving(false);
     }
   };
 

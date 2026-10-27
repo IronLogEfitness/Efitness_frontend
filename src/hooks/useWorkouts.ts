@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addMuscleGroup,
   addWorkoutExercise,
+  createSession,
   createWorkout,
   deleteWorkout,
   getWorkout,
@@ -104,5 +105,18 @@ export function useRemoveWorkoutExercise(workoutId: string) {
   return useMutation({
     mutationFn: (exerciseId: string) => removeWorkoutExercise(workoutId, exerciseId),
     onSuccess: () => invalidateWorkoutData(qc)
+  });
+}
+
+// Logging sets changes personal bests and progress stats as well as the workout,
+// so a new session invalidates workouts, progress, and exercises.
+export function useCreateSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: createSession,
+    onSuccess: () => {
+      invalidateWorkoutData(qc);
+      qc.invalidateQueries({ queryKey: queryRoots.exercises });
+    }
   });
 }
