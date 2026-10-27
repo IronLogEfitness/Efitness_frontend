@@ -3,6 +3,7 @@
     "name": "IronLog",
     "slug": "ironlog-app",
     "version": "1.0.4",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "splash": {
@@ -17,7 +18,8 @@
     "android": {
       "package": "com.ironlog.app",
       "adaptiveIcon": {
-        "backgroundColor": "#0a0a0a"
+        "backgroundColor": "#0a0a0a",
+        "foregroundImage": "./assets/adaptive-icon.png"
       }
     },
     "web": {
