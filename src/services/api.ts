@@ -1,7 +1,12 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-export const BASE_URL = 'https://efitness-backend-2530307.azurewebsites.net';
+// API base URL. Overridable per environment via EXPO_PUBLIC_API_URL (read from
+// .env / the EAS build profile and inlined into the bundle at build time), so
+// dev / staging / prod can differ without editing source. Falls back to the
+// production Azure URL when unset, keeping release builds zero-config.
+export const BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL ?? 'https://efitness-backend-2530307.azurewebsites.net';
 const TOKEN_KEY = 'ironlog_token';
 
 export const api = axios.create({
@@ -121,6 +126,38 @@ export const tokenStorage = {
   remove: () => SecureStore.deleteItemAsync(TOKEN_KEY),
   get: () => SecureStore.getItemAsync(TOKEN_KEY)
 };
+
+// ── Global 401 handling ──
+// A 401 on an authenticated request means the stored token is missing or expired
+// (access tokens last 7 days and there is no refresh flow). We clear it and notify
+// the app so it can drop back to the auth stack instead of sitting in a broken
+// authenticated state. AuthContext injects the handler via setUnauthorizedHandler,
+// which keeps this module free of an api <-> AuthContext import cycle.
+type UnauthorizedHandler = () => void;
+let onUnauthorized: UnauthorizedHandler | null = null;
+
+export const setUnauthorizedHandler = (handler: UnauthorizedHandler | null) => {
+  onUnauthorized = handler;
+};
+
+// A 401 from login / register is "invalid credentials", not an expired session,
+// so it must not trigger the global logout — the auth screen surfaces the error.
+const AUTH_ATTEMPT_PATHS = ['/auth/login', '/auth/register'];
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      const url = error.config?.url ?? '';
+      const isAuthAttempt = AUTH_ATTEMPT_PATHS.some((path) => url.includes(path));
+      if (!isAuthAttempt) {
+        await tokenStorage.remove();
+        onUnauthorized?.();
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const register = async (name: string, email: string, password: string) => {
   const { data } = await api.post<AuthResponse>('/auth/register', { name, email, password });

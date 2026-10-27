@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,14 +16,10 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
+import { SkeletonList } from '../components/Skeleton';
 import { HomeStackParamList } from '../navigation/types';
-import {
-  createWorkout,
-  deleteWorkout,
-  getApiErrorMessage,
-  getWorkouts,
-  Workout
-} from '../services/api';
+import { getApiErrorMessage, Workout } from '../services/api';
+import { useCreateWorkout, useDeleteWorkout, useWorkouts } from '../hooks/useWorkouts';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Day'>;
 
@@ -39,38 +35,37 @@ function formatDay(dateKey: string) {
 
 export function DayScreen({ route, navigation }: Props) {
   const { date } = route.params;
-  const [items, setItems] = useState<Workout[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [title, setTitle] = useState('');
-  const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await getWorkouts({ date });
-      setItems(data);
-    } catch (error) {
-      Alert.alert('Could not load sessions', getApiErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, [date]);
+  const workoutsQuery = useWorkouts({ date });
+  const items = workoutsQuery.data ?? [];
+  const loading = workoutsQuery.isPending;
+  const { refetch } = workoutsQuery;
+
+  const createWorkoutMutation = useCreateWorkout();
+  const deleteWorkoutMutation = useDeleteWorkout();
+  const saving = createWorkoutMutation.isPending;
 
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      refetch();
+    }, [refetch])
   );
+
+  useEffect(() => {
+    if (workoutsQuery.isError) {
+      Alert.alert('Could not load sessions', getApiErrorMessage(workoutsQuery.error));
+    }
+  }, [workoutsQuery.isError, workoutsQuery.error]);
 
   const createSession = async () => {
     if (!title.trim()) {
       Alert.alert('Missing title', 'Give your session a name.');
       return;
     }
-    setSaving(true);
     try {
-      const workout = await createWorkout({ date, title: title.trim() });
+      const workout = await createWorkoutMutation.mutateAsync({ date, title: title.trim() });
       setTitle('');
       setShowModal(false);
       navigation.navigate('Workout', {
@@ -80,11 +75,11 @@ export function DayScreen({ route, navigation }: Props) {
       });
     } catch (error) {
       Alert.alert('Could not create session', getApiErrorMessage(error));
-    } finally {
-      setSaving(false);
     }
   };
 
+  // Deletion invalidates the workouts cache (see useDeleteWorkout), so the list
+  // refreshes on its own.
   const confirmDelete = (workout: Workout) => {
     Alert.alert('Delete session?', `"${workout.title}" and its logged sets will be removed.`, [
       { text: 'Cancel', style: 'cancel' },
@@ -93,8 +88,7 @@ export function DayScreen({ route, navigation }: Props) {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteWorkout(workout.id);
-            await load();
+            await deleteWorkoutMutation.mutateAsync(workout.id);
           } catch (error) {
             Alert.alert('Delete failed', getApiErrorMessage(error));
           }
@@ -118,9 +112,7 @@ export function DayScreen({ route, navigation }: Props) {
       </View>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <SkeletonList />
       ) : (
         <FlatList
           data={items}

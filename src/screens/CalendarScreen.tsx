@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -8,7 +8,8 @@ import { MonthCalendar, todayKey, ymd } from '../components/MonthCalendar';
 import { COLORS, FONT, SPACING } from '../components/theme';
 import { HomeStackParamList } from '../navigation/types';
 import { useAuth } from '../services/AuthContext';
-import { getApiErrorMessage, getWorkouts } from '../services/api';
+import { getApiErrorMessage } from '../services/api';
+import { useWorkouts } from '../hooks/useWorkouts';
 
 type Nav = NativeStackNavigationProp<HomeStackParamList, 'Calendar'>;
 
@@ -23,28 +24,32 @@ export function CalendarScreen() {
   const navigation = useNavigation<Nav>();
   const { user } = useAuth();
   const [viewDate, setViewDate] = useState(() => new Date());
-  const [markedKeys, setMarkedKeys] = useState<Set<string>>(new Set());
 
-  const loadMonth = useCallback(async (date: Date) => {
-    try {
-      const { start, end } = monthRange(date);
-      const workouts = await getWorkouts({ start, end });
-      setMarkedKeys(new Set(workouts.map((w) => w.date.slice(0, 10))));
-    } catch (error) {
-      Alert.alert('Could not load calendar', getApiErrorMessage(error));
-    }
-  }, []);
+  // The query key carries the month range, so changing month refetches on its
+  // own. Switching month = just updating viewDate.
+  const range = useMemo(() => monthRange(viewDate), [viewDate]);
+  const workoutsQuery = useWorkouts(range);
+  const { refetch } = workoutsQuery;
 
-  useFocusEffect(
-    useCallback(() => {
-      loadMonth(viewDate);
-    }, [loadMonth, viewDate])
+  const markedKeys = useMemo(
+    () => new Set((workoutsQuery.data ?? []).map((w) => w.date.slice(0, 10))),
+    [workoutsQuery.data]
   );
 
-  const changeMonth = (next: Date) => {
-    setViewDate(next);
-    loadMonth(next);
-  };
+  // Preserve the original refetch-on-focus so a session logged elsewhere shows up.
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
+
+  useEffect(() => {
+    if (workoutsQuery.isError) {
+      Alert.alert('Could not load calendar', getApiErrorMessage(workoutsQuery.error));
+    }
+  }, [workoutsQuery.isError, workoutsQuery.error]);
+
+  const changeMonth = (next: Date) => setViewDate(next);
 
   const openDay = (key: string) => navigation.navigate('Day', { date: key });
 
@@ -55,7 +60,10 @@ export function CalendarScreen() {
           <Text style={styles.title}>TRAINING</Text>
           <Text style={styles.subtitle}>Your training journal</Text>
         </View>
-        <ScalePressable onPress={() => navigation.navigate('Profile')}>
+        <ScalePressable
+          onPress={() => navigation.navigate('Profile')}
+          accessibilityLabel="Open profile"
+        >
           <Avatar name={user?.name ?? 'User'} />
         </ScalePressable>
       </View>

@@ -1,9 +1,17 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState
+} from 'react';
 import {
   getApiErrorMessage,
   login as apiLogin,
   me,
   register as apiRegister,
+  setUnauthorizedHandler,
   tokenStorage,
   updateProfile as apiUpdateProfile,
   UpdateProfilePayload,
@@ -50,36 +58,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     rehydrate();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  // Any 401 on an authenticated request (expired / missing token) drops the user
+  // back to the auth stack. The API layer already cleared the stored token; here
+  // we clear the in-memory session so RootNavigator renders the auth stack.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setToken(null);
+      setUser(null);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
     const response = await apiLogin(email, password);
     await tokenStorage.save(response.access_token);
     setToken(response.access_token);
     const profile = await me();
     setUser(profile);
-  };
+  }, []);
 
-  const register = async (name: string, email: string, password: string) => {
-    const response = await apiRegister(name, email, password);
-    await tokenStorage.save(response.access_token);
-    setToken(response.access_token);
-    const profile = await me();
-    setUser(profile);
-  };
+  const register = useCallback(
+    async (name: string, email: string, password: string) => {
+      const response = await apiRegister(name, email, password);
+      await tokenStorage.save(response.access_token);
+      setToken(response.access_token);
+      const profile = await me();
+      setUser(profile);
+    },
+    []
+  );
 
-  const updateProfile = async (payload: UpdateProfilePayload) => {
+  const updateProfile = useCallback(async (payload: UpdateProfilePayload) => {
     const profile = await apiUpdateProfile(payload);
     setUser(profile);
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await tokenStorage.remove();
     setToken(null);
     setUser(null);
-  };
+  }, []);
 
+  // The callbacks are stable (useCallback), so the context value only changes
+  // when the auth state does — satisfying exhaustive-deps and avoiding needless
+  // re-renders of every consumer.
   const value = useMemo(
     () => ({ user, token, loading, login, register, updateProfile, logout }),
-    [user, token, loading]
+    [user, token, loading, login, register, updateProfile, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -63,6 +63,7 @@ export function RegisterScreen({ navigation }: Props) {
           <TextInput
             value={name}
             onChangeText={setName}
+            accessibilityLabel="Full name"
             placeholder="Your name"
             placeholderTextColor={COLORS.muted}
             autoCapitalize="words"
@@ -77,6 +78,7 @@ export function RegisterScreen({ navigation }: Props) {
           <TextInput
             value={email}
             onChangeText={setEmail}
+            accessibilityLabel="Email"
             placeholder="you@example.com"
             placeholderTextColor={COLORS.muted}
             keyboardType="email-address"
@@ -93,6 +95,7 @@ export function RegisterScreen({ navigation }: Props) {
           <TextInput
             value={password}
             onChangeText={setPassword}
+            accessibilityLabel="Password"
             placeholder="Minimum 6 characters"
             placeholderTextColor={COLORS.muted}
             secureTextEntry
@@ -102,7 +105,13 @@ export function RegisterScreen({ navigation }: Props) {
           />
         </View>
 
-        <ScalePressable style={styles.primaryButton} onPress={onSubmit} disabled={loading}>
+        <ScalePressable
+          style={styles.primaryButton}
+          onPress={onSubmit}
+          disabled={loading}
+          accessibilityLabel="Create account"
+          accessibilityState={{ busy: loading }}
+        >
           {loading ? (
             <ActivityIndicator color="#000" />
           ) : (
@@ -112,7 +121,12 @@ export function RegisterScreen({ navigation }: Props) {
 
         <Text style={styles.footerText}>
           Have an account?{' '}
-          <Text style={styles.link} onPress={() => navigation.navigate('Login')}>
+          <Text
+            style={styles.link}
+            onPress={() => navigation.navigate('Login')}
+            accessibilityRole="link"
+            accessibilityLabel="Log in"
+          >
             Log in
           </Text>
         </Text>

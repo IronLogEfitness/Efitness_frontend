@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -6,7 +6,6 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -17,24 +16,19 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
+import { SkeletonList } from '../components/Skeleton';
 import { CoachStackParamList } from '../navigation/types';
+import { Goal, getApiErrorMessage } from '../services/api';
+import { useExerciseOptions } from '../hooks/useExercises';
 import {
-  Goal,
-  GoalTrajectory,
-  createGoal,
-  deleteGoal,
-  getApiErrorMessage,
-  getExercisesByMuscle,
-  getGoals,
-  getGoalTrajectory,
-  getMuscles,
-  updateGoal
-} from '../services/api';
+  GoalRow,
+  useCreateGoal,
+  useDeleteGoal,
+  useGoalsWithTrajectory,
+  useUpdateGoal
+} from '../hooks/useGoals';
 
 type Props = NativeStackScreenProps<CoachStackParamList, 'Goals'>;
-
-type ExerciseOption = { id: string; name: string };
-type GoalRow = Goal & { trajectory?: GoalTrajectory | null };
 
 const DEADLINE_PRESETS: { label: string; months: number }[] = [
   { label: '1 MO', months: 1 },
@@ -90,71 +84,51 @@ function statusLabel(status?: string): string {
 }
 
 export function GoalsScreen({ navigation }: Props) {
-  const [goals, setGoals] = useState<GoalRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
   const [showCreate, setShowCreate] = useState(false);
-  const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
   const [exerciseId, setExerciseId] = useState<string | null>(null);
   const [targetValue, setTargetValue] = useState('');
   const [deadlineMonths, setDeadlineMonths] = useState(3);
-  const [saving, setSaving] = useState(false);
 
   const deadlineDate = useMemo(() => addMonths(deadlineMonths), [deadlineMonths]);
 
-  const load = useCallback(async () => {
-    try {
-      const list = await getGoals();
-      // Fetch each goal's trajectory in parallel (deterministic + cheap server-side).
-      const withTrajectory = await Promise.all(
-        list.map(async (g) => {
-          try {
-            const trajectory = await getGoalTrajectory(g.id);
-            return { ...g, trajectory };
-          } catch {
-            return { ...g, trajectory: null };
-          }
-        })
-      );
-      setGoals(withTrajectory);
-    } catch (error) {
-      Alert.alert('Could not load goals', getApiErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const goalsQuery = useGoalsWithTrajectory();
+  const goals = goalsQuery.data ?? [];
+  const loading = goalsQuery.isPending;
+  const { refetch } = goalsQuery;
+
+  // Exercise options for the create modal: only fetched while the modal is open
+  // (a goal can be created without one, so a failure is non-fatal).
+  const optionsQuery = useExerciseOptions({ enabled: showCreate });
+  const exerciseOptions = optionsQuery.data ?? [];
+
+  const createGoalMutation = useCreateGoal();
+  const updateGoalMutation = useUpdateGoal();
+  const deleteGoalMutation = useDeleteGoal();
+  const saving = createGoalMutation.isPending;
 
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load])
+      refetch();
+    }, [refetch])
   );
 
-  const loadExerciseOptions = useCallback(async () => {
-    try {
-      const muscles = await getMuscles();
-      const withExercises = muscles.filter((m) => m.exercise_count > 0);
-      const lists = await Promise.all(withExercises.map((m) => getExercisesByMuscle(m.muscle)));
-      const options = lists
-        .flat()
-        .map((ex) => ({ id: ex.id, name: ex.name }))
-        .filter((item, i, self) => self.findIndex((e) => e.id === item.id) === i);
-      setExerciseOptions(options);
-      if (options[0]) {
-        setExerciseId(options[0].id);
-      }
-    } catch {
-      // non-fatal — a goal can be created without an exercise
+  useEffect(() => {
+    if (goalsQuery.isError) {
+      Alert.alert('Could not load goals', getApiErrorMessage(goalsQuery.error));
     }
-  }, []);
+  }, [goalsQuery.isError, goalsQuery.error]);
+
+  // Default the picker to the first exercise once options load.
+  useEffect(() => {
+    if (exerciseId === null && exerciseOptions.length > 0) {
+      setExerciseId(exerciseOptions[0].id);
+    }
+  }, [exerciseOptions, exerciseId]);
 
   const openCreate = () => {
     setTargetValue('');
     setDeadlineMonths(3);
     setShowCreate(true);
-    if (exerciseOptions.length === 0) {
-      loadExerciseOptions();
-    }
   };
 
   const save = async () => {
@@ -163,27 +137,21 @@ export function GoalsScreen({ navigation }: Props) {
       Alert.alert('Invalid target', 'Enter a target weight greater than 0.');
       return;
     }
-    setSaving(true);
     try {
-      await createGoal({
+      await createGoalMutation.mutateAsync({
         exercise_id: exerciseId ?? undefined,
         target_value: value,
         target_date: toYMD(deadlineDate)
       });
       setShowCreate(false);
-      setLoading(true);
-      await load();
     } catch (error) {
       Alert.alert('Could not create goal', getApiErrorMessage(error));
-    } finally {
-      setSaving(false);
     }
   };
 
   const markAchieved = async (goal: Goal) => {
     try {
-      await updateGoal(goal.id, { status: 'achieved' });
-      await load();
+      await updateGoalMutation.mutateAsync({ id: goal.id, payload: { status: 'achieved' } });
     } catch (error) {
       Alert.alert('Could not update', getApiErrorMessage(error));
     }
@@ -197,8 +165,7 @@ export function GoalsScreen({ navigation }: Props) {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteGoal(goal.id);
-            await load();
+            await deleteGoalMutation.mutateAsync(goal.id);
           } catch (error) {
             Alert.alert('Delete failed', getApiErrorMessage(error));
           }
@@ -282,9 +249,7 @@ export function GoalsScreen({ navigation }: Props) {
       <Text style={styles.subtitle}>Set a target, track the pace</Text>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <SkeletonList />
       ) : (
         <FlatList
           data={goals}
@@ -319,15 +284,15 @@ export function GoalsScreen({ navigation }: Props) {
                     No exercises found — add some first to track a lift, or create a generic goal.
                   </Text>
                 ) : (
-                  <ScrollView
+                  <FlatList
                     horizontal
+                    data={exerciseOptions}
+                    keyExtractor={(ex) => ex.id}
                     showsHorizontalScrollIndicator={false}
                     style={styles.pillRow}
                     keyboardShouldPersistTaps="handled"
-                  >
-                    {exerciseOptions.map((ex) => (
+                    renderItem={({ item: ex }) => (
                       <ScalePressable
-                        key={ex.id}
                         style={[styles.pill, exerciseId === ex.id && styles.pillActive]}
                         onPress={() => setExerciseId(ex.id)}
                       >
@@ -335,8 +300,8 @@ export function GoalsScreen({ navigation }: Props) {
                           {ex.name}
                         </Text>
                       </ScalePressable>
-                    ))}
-                  </ScrollView>
+                    )}
+                  />
                 )}
 
                 <Text style={styles.label}>TARGET WEIGHT (KG)</Text>

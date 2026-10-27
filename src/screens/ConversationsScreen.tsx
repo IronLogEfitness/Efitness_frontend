@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -18,14 +18,13 @@ import { useFocusEffect } from '@react-navigation/native';
 import { CoachStackParamList } from '../navigation/types';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
+import { SkeletonList } from '../components/Skeleton';
+import { ChatMessagePayload, Conversation, getApiErrorMessage } from '../services/api';
 import {
-  ChatMessagePayload,
-  Conversation,
-  getApiErrorMessage,
-  getConversations,
-  importConversation,
-  updateConversation
-} from '../services/api';
+  useConversations,
+  useImportConversation,
+  useUpdateConversation
+} from '../hooks/useConversations';
 import { GeminiScrapeResult, GeminiShareWebView } from '../components/GeminiShareWebView';
 
 type Props = NativeStackScreenProps<CoachStackParamList, 'Conversations'>;
@@ -51,8 +50,12 @@ function relativeTime(iso: string): string {
 const isImport = (c: Conversation) => c.source === 'gemini_import';
 
 export function ConversationsScreen({ navigation }: Props) {
-  const [items, setItems] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const conversationsQuery = useConversations({ limit: 50 });
+  const items = conversationsQuery.data ?? [];
+  const loading = conversationsQuery.isPending;
+
+  const importMutation = useImportConversation();
+  const updateMutation = useUpdateConversation();
 
   // Import sheet
   const [showImport, setShowImport] = useState(false);
@@ -72,23 +75,18 @@ export function ConversationsScreen({ navigation }: Props) {
   const [editLabel, setEditLabel] = useState('');
   const [editPublished, setEditPublished] = useState(false);
 
-  const loadConversations = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await getConversations({ limit: 50 });
-      setItems(data);
-    } catch (error) {
-      Alert.alert('Could not load conversations', getApiErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  const { refetch } = conversationsQuery;
   useFocusEffect(
     useCallback(() => {
-      loadConversations();
-    }, [loadConversations])
+      refetch();
+    }, [refetch])
   );
+
+  useEffect(() => {
+    if (conversationsQuery.isError) {
+      Alert.alert('Could not load conversations', getApiErrorMessage(conversationsQuery.error));
+    }
+  }, [conversationsQuery.isError, conversationsQuery.error]);
 
   const finishImport = async (created: Conversation) => {
     setShowImport(false);
@@ -97,7 +95,8 @@ export function ConversationsScreen({ navigation }: Props) {
     setImportUrl('');
     setImportMode('text');
     setScrapeNote(null);
-    await loadConversations();
+    // The import mutation's onSuccess invalidates the conversations cache, so the
+    // list refreshes on its own.
     Alert.alert('Imported', `Saved "${created.title ?? 'conversation'}" with ${created.message_count} messages.`);
   };
 
@@ -108,7 +107,7 @@ export function ConversationsScreen({ navigation }: Props) {
     }
     setImporting(true);
     try {
-      const created = await importConversation({
+      const created = await importMutation.mutateAsync({
         raw_text: importText.trim(),
         title: importTitle.trim() || undefined
       });
@@ -145,7 +144,7 @@ export function ConversationsScreen({ navigation }: Props) {
           role: m.role === 'user' ? 'user' : 'assistant',
           content: m.content
         }));
-        const created = await importConversation({
+        const created = await importMutation.mutateAsync({
           messages,
           title: importTitle.trim() || undefined
         });
@@ -205,13 +204,15 @@ export function ConversationsScreen({ navigation }: Props) {
 
     setSavingEdit(true);
     try {
-      await updateConversation(editing.id, {
-        title: editTitle.trim() || undefined,
-        label: editLabel.trim(),
-        is_published: editPublished
+      await updateMutation.mutateAsync({
+        id: editing.id,
+        payload: {
+          title: editTitle.trim() || undefined,
+          label: editLabel.trim(),
+          is_published: editPublished
+        }
       });
       setEditing(null);
-      await loadConversations();
     } catch (error) {
       Alert.alert('Could not save', getApiErrorMessage(error));
     } finally {
@@ -235,9 +236,7 @@ export function ConversationsScreen({ navigation }: Props) {
       </View>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <SkeletonList />
       ) : items.length === 0 ? (
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyEmoji}>💬</Text>
@@ -286,7 +285,11 @@ export function ConversationsScreen({ navigation }: Props) {
         />
       )}
 
-      <ScalePressable style={styles.fab} onPress={() => setShowImport(true)}>
+      <ScalePressable
+        style={styles.fab}
+        onPress={() => setShowImport(true)}
+        accessibilityLabel="Import conversation"
+      >
         <Text style={styles.fabText}>+</Text>
       </ScalePressable>
 

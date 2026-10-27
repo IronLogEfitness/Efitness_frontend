@@ -1,5 +1,7 @@
 import React, { useRef } from 'react';
 import {
+  AccessibilityRole,
+  AccessibilityState,
   Animated,
   GestureResponderEvent,
   Pressable,
@@ -20,9 +22,17 @@ export function ScalePressable({
   onPressIn,
   onPressOut,
   style,
+  accessibilityRole,
+  accessibilityState,
+  disabled,
   ...rest
 }: ScalePressableProps) {
   const scale = useRef(new Animated.Value(1)).current;
+
+  // Default to button semantics for screen readers (callers can override), and
+  // always reflect the disabled state so assistive tech announces it.
+  const role: AccessibilityRole = accessibilityRole ?? 'button';
+  const a11yState: AccessibilityState = { disabled: !!disabled, ...accessibilityState };
 
   const animateTo = (value: number) => {
     Animated.spring(scale, {
@@ -48,6 +58,9 @@ export function ScalePressable({
   return (
     <Animated.View style={[{ transform: [{ scale }] }, style]}>
       <Pressable
+        accessibilityRole={role}
+        accessibilityState={a11yState}
+        disabled={disabled}
         {...rest}
         style={styles.fill}
         onPressIn={handlePressIn}
