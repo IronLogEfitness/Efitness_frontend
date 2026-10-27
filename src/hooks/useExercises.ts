@@ -33,9 +33,11 @@ export function useExercise(id: string | null) {
 
 // Every exercise the user has, across all muscle groups that have any,
 // de-duplicated. Mirrors the progress screen's previous imperative loadOptions.
-export function useExerciseOptions() {
+// `enabled` lets callers defer the fetch (e.g. until a picker modal opens).
+export function useExerciseOptions(options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.exerciseOptions,
+    enabled: options?.enabled ?? true,
     queryFn: async (): Promise<ExerciseOption[]> => {
       const muscles = await getMuscles();
       const withExercises = muscles.filter((m) => m.exercise_count > 0);
