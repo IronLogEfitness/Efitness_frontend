@@ -286,7 +286,11 @@ export function ConversationsScreen({ navigation }: Props) {
         />
       )}
 
-      <ScalePressable style={styles.fab} onPress={() => setShowImport(true)}>
+      <ScalePressable
+        style={styles.fab}
+        onPress={() => setShowImport(true)}
+        accessibilityLabel="Import conversation"
+      >
         <Text style={styles.fabText}>+</Text>
       </ScalePressable>
 

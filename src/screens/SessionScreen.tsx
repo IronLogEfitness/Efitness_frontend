@@ -206,7 +206,11 @@ export function SessionScreen({ route, navigation }: Props) {
               placeholder="0"
               placeholderTextColor={COLORS.muted}
             />
-            <ScalePressable style={styles.removeButton} onPress={() => removeSet(setRow.id)}>
+            <ScalePressable
+              style={styles.removeButton}
+              onPress={() => removeSet(setRow.id)}
+              accessibilityLabel={`Remove set ${setRow.set_number}`}
+            >
               <Text style={styles.removeText}>×</Text>
             </ScalePressable>
           </View>

@@ -60,7 +60,10 @@ export function CalendarScreen() {
           <Text style={styles.title}>TRAINING</Text>
           <Text style={styles.subtitle}>Your training journal</Text>
         </View>
-        <ScalePressable onPress={() => navigation.navigate('Profile')}>
+        <ScalePressable
+          onPress={() => navigation.navigate('Profile')}
+          accessibilityLabel="Open profile"
+        >
           <Avatar name={user?.name ?? 'User'} />
         </ScalePressable>
       </View>

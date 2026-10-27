@@ -58,6 +58,7 @@ export function LoginScreen({ navigation }: Props) {
           <TextInput
             value={email}
             onChangeText={setEmail}
+            accessibilityLabel="Email"
             placeholder="you@example.com"
             placeholderTextColor={COLORS.muted}
             keyboardType="email-address"
@@ -74,6 +75,7 @@ export function LoginScreen({ navigation }: Props) {
           <TextInput
             value={password}
             onChangeText={setPassword}
+            accessibilityLabel="Password"
             placeholder="••••••••"
             placeholderTextColor={COLORS.muted}
             secureTextEntry
@@ -83,7 +85,13 @@ export function LoginScreen({ navigation }: Props) {
           />
         </View>
 
-        <ScalePressable style={styles.primaryButton} onPress={onSubmit} disabled={loading}>
+        <ScalePressable
+          style={styles.primaryButton}
+          onPress={onSubmit}
+          disabled={loading}
+          accessibilityLabel="Log in"
+          accessibilityState={{ busy: loading }}
+        >
           {loading ? (
             <ActivityIndicator color="#000" />
           ) : (
@@ -93,7 +101,12 @@ export function LoginScreen({ navigation }: Props) {
 
         <Text style={styles.footerText}>
           No account?{' '}
-          <Text style={styles.link} onPress={() => navigation.navigate('Register')}>
+          <Text
+            style={styles.link}
+            onPress={() => navigation.navigate('Register')}
+            accessibilityRole="link"
+            accessibilityLabel="Sign up"
+          >
             Sign up
           </Text>
         </Text>
