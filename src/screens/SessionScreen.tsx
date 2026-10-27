@@ -16,6 +16,7 @@ import { ScalePressable } from '../components/ScalePressable';
 import { getApiErrorMessage, SessionSet } from '../services/api';
 import { useExercise } from '../hooks/useExercises';
 import { useCreateSession } from '../hooks/useWorkouts';
+import { hapticLight, hapticSuccess } from '../services/haptics';
 import { HomeStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Session'>;
@@ -117,12 +118,18 @@ export function SessionScreen({ route, navigation }: Props) {
     }
 
     try {
-      await createSessionMutation.mutateAsync({
+      const saved = await createSessionMutation.mutateAsync({
         exercise_id: exerciseId,
         workout_id: workoutId,
         sets: parsed,
         notes: notes.trim() || undefined
       });
+      // Celebrate a new PR with a stronger tap; a light tap otherwise.
+      if (saved?.pr?.is_pr) {
+        hapticSuccess();
+      } else {
+        hapticLight();
+      }
       Alert.alert('Session saved', 'Great work. Session logged successfully.', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);

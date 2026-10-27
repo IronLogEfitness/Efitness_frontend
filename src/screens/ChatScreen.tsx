@@ -28,6 +28,7 @@ import {
   getConversations,
   sendChat
 } from '../services/api';
+import { hapticLight, hapticSuccess } from '../services/haptics';
 
 type Props = NativeStackScreenProps<CoachStackParamList, 'Chat'>;
 
@@ -354,6 +355,14 @@ export function ChatScreen({ navigation, route }: Props) {
         accepted_ids: accepted,
         rejected_ids: rejected
       });
+      if (mode === 'apply') {
+        // Celebrate a PR, otherwise a subtle tap to confirm the writes applied.
+        if (res.results.some((r) => r.pr?.is_pr)) {
+          hapticSuccess();
+        } else if (accepted.length > 0) {
+          hapticLight();
+        }
+      }
       // Hide the approval card and append the coach's confirmation reply.
       setMessages((prev) => [
         ...prev.map((m) => (m.id === message.id ? { ...m, actionsResolved: true } : m)),
