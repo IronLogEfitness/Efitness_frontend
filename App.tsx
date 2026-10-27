@@ -10,8 +10,10 @@ import {
   DMSans_700Bold
 } from '@expo-google-fonts/dm-sans';
 import { ActivityIndicator, View } from 'react-native';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { AuthProvider } from './src/services/AuthContext';
+import { queryClient } from './src/services/queryClient';
 import { UpdatePrompt } from './src/components/UpdatePrompt';
 import { COLORS } from './src/components/theme';
 
@@ -53,13 +55,15 @@ export default function App() {
 
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-      <AuthProvider>
-        <NavigationContainer theme={navTheme}>
-          <StatusBar style="light" />
-          <RootNavigator />
-        </NavigationContainer>
-        <UpdatePrompt />
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <NavigationContainer theme={navTheme}>
+            <StatusBar style="light" />
+            <RootNavigator />
+          </NavigationContainer>
+          <UpdatePrompt />
+        </AuthProvider>
+      </QueryClientProvider>
     </SafeAreaProvider>
   );
 }

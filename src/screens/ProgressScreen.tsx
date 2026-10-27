@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,23 +12,11 @@ import { Avatar } from '../components/Avatar';
 import { ScalePressable } from '../components/ScalePressable';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { useAuth } from '../services/AuthContext';
-import {
-  CoachBalance,
-  CoachRecap,
-  ExerciseProgressPoint,
-  getApiErrorMessage,
-  getBalance,
-  getExerciseProgress,
-  getExercisesByMuscle,
-  getMuscles,
-  getProgressOverview,
-  getRecap,
-  getWorkouts,
-  ProgressOverview,
-  Workout
-} from '../services/api';
-
-type ExerciseOption = { id: string; name: string };
+import { getApiErrorMessage } from '../services/api';
+import { ExerciseOption, useExerciseOptions } from '../hooks/useExercises';
+import { useBalance, useRecap } from '../hooks/useCoach';
+import { useExerciseProgress, useProgressOverview } from '../hooks/useProgress';
+import { useWorkouts } from '../hooks/useWorkouts';
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
@@ -58,81 +46,65 @@ function dateLine(date: string) {
 
 export function ProgressScreen() {
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
-  const [overview, setOverview] = useState<ProgressOverview | null>(null);
-  const [exerciseOptions, setExerciseOptions] = useState<ExerciseOption[]>([]);
+
+  // Range for the "recent sessions" list: workouts in the last 60 days. Computed
+  // once per mount so the query key stays stable across renders.
+  const range = useMemo(() => {
+    const today = new Date();
+    const since = new Date();
+    since.setDate(since.getDate() - 60);
+    return { start: ymd(since), end: ymd(today) };
+  }, []);
+
+  const overviewQuery = useProgressOverview();
+  const optionsQuery = useExerciseOptions();
+  const recapQuery = useRecap();
+  const balanceQuery = useBalance();
+  const workoutsQuery = useWorkouts(range);
+
+  const overview = overviewQuery.data ?? null;
+  const exerciseOptions = optionsQuery.data ?? [];
+  // Coach cards are a bonus layer: a failure just hides the card (the query error
+  // is swallowed here exactly as the previous .catch(() => null) did).
+  const recap = recapQuery.data ?? null;
+  const balance = balanceQuery.data ?? null;
+  // Recent sessions: the last 60 days of workouts, most recent first, capped at 15.
+  const recentWorkouts = useMemo(
+    () => (workoutsQuery.data ? [...workoutsQuery.data].reverse().slice(0, 15) : []),
+    [workoutsQuery.data]
+  );
+
+  // The core load is the stats + the exercise picker; everything else loads in
+  // parallel without blocking or failing it.
+  const loading = overviewQuery.isPending || optionsQuery.isPending;
+
   const [selectedExercise, setSelectedExercise] = useState<ExerciseOption | null>(null);
-  const [chartData, setChartData] = useState<ExerciseProgressPoint[]>([]);
-  const [recap, setRecap] = useState<CoachRecap | null>(null);
-  const [balance, setBalance] = useState<CoachBalance | null>(null);
-  const [recentWorkouts, setRecentWorkouts] = useState<Workout[]>([]);
-
-  const loadOptions = useCallback(async () => {
-    const muscles = await getMuscles();
-    const withExercises = muscles.filter((m) => m.exercise_count > 0);
-    const exerciseLists = await Promise.all(
-      withExercises.map((m) => getExercisesByMuscle(m.muscle))
-    );
-
-    const options = exerciseLists
-      .flat()
-      .map((exercise) => ({ id: exercise.id, name: exercise.name }))
-      .filter(
-        (item, index, self) => self.findIndex((entry) => entry.id === item.id) === index
-      );
-
-    setExerciseOptions(options);
-    return options;
-  }, []);
-
-  const loadOverview = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [overviewData, options] = await Promise.all([getProgressOverview(), loadOptions()]);
-      setOverview(overviewData);
-
-      // Coach cards are a bonus layer — fetch them without blocking (or failing)
-      // the core progress load. Recap/balance are deterministic + server-cached.
-      getRecap().then(setRecap).catch(() => setRecap(null));
-      getBalance().then(setBalance).catch(() => setBalance(null));
-
-      // Recent sessions come from the workouts in the last 60 days (most recent
-      // first). The overview endpoint doesn't carry them, so fetch them here.
-      const today = new Date();
-      const since = new Date();
-      since.setDate(since.getDate() - 60);
-      getWorkouts({ start: ymd(since), end: ymd(today) })
-        .then((ws) => setRecentWorkouts([...ws].reverse().slice(0, 15)))
-        .catch(() => setRecentWorkouts([]));
-
-      const first = options[0] || null;
-      setSelectedExercise(first);
-      if (first) {
-        const progress = await getExerciseProgress(first.id);
-        setChartData(progress);
-      } else {
-        setChartData([]);
-      }
-    } catch (error) {
-      Alert.alert('Could not load progress', getApiErrorMessage(error));
-    } finally {
-      setLoading(false);
+  // Default to the first exercise once the options arrive.
+  useEffect(() => {
+    if (!selectedExercise && exerciseOptions.length > 0) {
+      setSelectedExercise(exerciseOptions[0]);
     }
-  }, [loadOptions]);
+  }, [exerciseOptions, selectedExercise]);
 
-  const pickExercise = useCallback(async (exercise: ExerciseOption) => {
-    try {
-      setSelectedExercise(exercise);
-      const progress = await getExerciseProgress(exercise.id);
-      setChartData(progress);
-    } catch (error) {
-      Alert.alert('Could not load chart', getApiErrorMessage(error));
-    }
-  }, []);
+  const progressQuery = useExerciseProgress(selectedExercise?.id ?? null);
+  const chartData = progressQuery.data ?? [];
+
+  const pickExercise = (exercise: ExerciseOption) => setSelectedExercise(exercise);
 
   useEffect(() => {
-    loadOverview();
-  }, [loadOverview]);
+    if (overviewQuery.isError || optionsQuery.isError) {
+      Alert.alert(
+        'Could not load progress',
+        getApiErrorMessage(overviewQuery.error ?? optionsQuery.error)
+      );
+    }
+  }, [overviewQuery.isError, optionsQuery.isError, overviewQuery.error, optionsQuery.error]);
+
+  useEffect(() => {
+    if (progressQuery.isError) {
+      Alert.alert('Could not load chart', getApiErrorMessage(progressQuery.error));
+    }
+  }, [progressQuery.isError, progressQuery.error]);
 
   const chartPoints = useMemo(() => {
     if (!Array.isArray(chartData)) {
