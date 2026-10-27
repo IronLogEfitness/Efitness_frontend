@@ -16,6 +16,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
+import { SkeletonList } from '../components/Skeleton';
 import { CoachStackParamList } from '../navigation/types';
 import { Goal, getApiErrorMessage } from '../services/api';
 import { useExerciseOptions } from '../hooks/useExercises';
@@ -248,9 +249,7 @@ export function GoalsScreen({ navigation }: Props) {
       <Text style={styles.subtitle}>Set a target, track the pace</Text>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <SkeletonList />
       ) : (
         <FlatList
           data={goals}

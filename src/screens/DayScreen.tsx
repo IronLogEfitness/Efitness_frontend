@@ -16,6 +16,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
+import { SkeletonList } from '../components/Skeleton';
 import { HomeStackParamList } from '../navigation/types';
 import { getApiErrorMessage, Workout } from '../services/api';
 import { useCreateWorkout, useDeleteWorkout, useWorkouts } from '../hooks/useWorkouts';
@@ -111,9 +112,7 @@ export function DayScreen({ route, navigation }: Props) {
       </View>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <SkeletonList />
       ) : (
         <FlatList
           data={items}

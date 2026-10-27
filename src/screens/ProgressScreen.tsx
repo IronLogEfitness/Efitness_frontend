@@ -1,15 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  StyleSheet,
-  Text,
-  View
-} from 'react-native';
+import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 import { VictoryArea, VictoryAxis, VictoryChart, VictoryTheme } from 'victory-native';
 import { Avatar } from '../components/Avatar';
 import { ScalePressable } from '../components/ScalePressable';
+import { Skeleton } from '../components/Skeleton';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { useAuth } from '../services/AuthContext';
 import { getApiErrorMessage } from '../services/api';
@@ -118,8 +112,15 @@ export function ProgressScreen() {
 
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color={COLORS.accent} />
+      <View style={styles.content}>
+        <Skeleton width="45%" height={34} />
+        <Skeleton width="70%" height={14} style={styles.skeletonSubtitle} />
+        <View style={styles.skeletonStatsRow}>
+          <Skeleton height={90} radius={RADIUS.md} style={styles.skeletonStat} />
+          <Skeleton height={90} radius={RADIUS.md} style={styles.skeletonStat} />
+          <Skeleton height={90} radius={RADIUS.md} style={styles.skeletonStat} />
+        </View>
+        <Skeleton height={260} radius={RADIUS.lg} style={styles.skeletonChart} />
       </View>
     );
   }
@@ -310,6 +311,20 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  skeletonSubtitle: {
+    marginTop: SPACING.sm
+  },
+  skeletonStatsRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: SPACING.lg
+  },
+  skeletonStat: {
+    flex: 1
+  },
+  skeletonChart: {
+    marginTop: SPACING.md
   },
   topBar: {
     flexDirection: 'row',

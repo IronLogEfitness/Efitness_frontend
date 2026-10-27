@@ -18,6 +18,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { CoachStackParamList } from '../navigation/types';
 import { COLORS, FONT, RADIUS, SPACING } from '../components/theme';
 import { ScalePressable } from '../components/ScalePressable';
+import { SkeletonList } from '../components/Skeleton';
 import { ChatMessagePayload, Conversation, getApiErrorMessage } from '../services/api';
 import {
   useConversations,
@@ -235,9 +236,7 @@ export function ConversationsScreen({ navigation }: Props) {
       </View>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={COLORS.accent} />
-        </View>
+        <SkeletonList />
       ) : items.length === 0 ? (
         <View style={styles.emptyWrap}>
           <Text style={styles.emptyEmoji}>💬</Text>
