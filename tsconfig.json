@@ -5,6 +5,6 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
-    "types": ["react", "react-native"]
+    "types": ["react", "react-native", "jest"]
   }
 }

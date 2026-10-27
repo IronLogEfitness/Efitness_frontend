@@ -160,7 +160,7 @@ export function SessionScreen({ route, navigation }: Props) {
           <Text style={styles.exerciseEmoji}>{emoji}</Text>
           <View>
             <Text style={styles.title}>{exerciseName}</Text>
-            <Text style={styles.subtitle}>Log today's sets</Text>
+            <Text style={styles.subtitle}>Log today&apos;s sets</Text>
           </View>
         </View>
 
