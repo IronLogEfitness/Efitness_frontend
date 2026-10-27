@@ -6,7 +6,6 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -286,15 +285,15 @@ export function GoalsScreen({ navigation }: Props) {
                     No exercises found — add some first to track a lift, or create a generic goal.
                   </Text>
                 ) : (
-                  <ScrollView
+                  <FlatList
                     horizontal
+                    data={exerciseOptions}
+                    keyExtractor={(ex) => ex.id}
                     showsHorizontalScrollIndicator={false}
                     style={styles.pillRow}
                     keyboardShouldPersistTaps="handled"
-                  >
-                    {exerciseOptions.map((ex) => (
+                    renderItem={({ item: ex }) => (
                       <ScalePressable
-                        key={ex.id}
                         style={[styles.pill, exerciseId === ex.id && styles.pillActive]}
                         onPress={() => setExerciseId(ex.id)}
                       >
@@ -302,8 +301,8 @@ export function GoalsScreen({ navigation }: Props) {
                           {ex.name}
                         </Text>
                       </ScalePressable>
-                    ))}
-                  </ScrollView>
+                    )}
+                  />
                 )}
 
                 <Text style={styles.label}>TARGET WEIGHT (KG)</Text>
