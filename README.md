@@ -14,9 +14,13 @@ Gemini agent) lives in a separate repo:
 
 ## Screenshots
 
-| Login | Session logging | AI coach | Progress |
-| --- | --- | --- | --- |
-| ![Login](assets/screenshots/login.png) | ![Session logging](assets/screenshots/session.png) | ![AI coach chat](assets/screenshots/coach.png) | ![Progress dashboard](assets/screenshots/progress.png) |
+| AI coach — human-in-the-loop | Progress dashboard | Progression chart |
+| --- | --- | --- |
+| ![AI coach proposing actions to approve before anything is written](assets/screenshots/01-ai-coach.jpg) | ![Progress dashboard: totals, weekly recap, push/pull/legs balance](assets/screenshots/02-progress.jpg) | ![Per-exercise weight-over-time chart](assets/screenshots/03-progression-chart.jpg) |
+
+| Workout + next targets | Session logging | Training calendar |
+| --- | --- | --- |
+| ![Workout view with the coach's deterministic next-session targets](assets/screenshots/04-workout-detail.jpg) | ![Logging sets with live personal-best tracking](assets/screenshots/05-log-session.jpg) | ![Training calendar — every logged day at a glance](assets/screenshots/06-calendar.jpg) |
 
 ## Features
 
