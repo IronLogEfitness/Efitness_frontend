@@ -66,14 +66,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
-      - name: Set up EAS CLI (authenticated via EXPO_TOKEN)
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+      # Install the EAS CLI directly with npm. (The old expo/expo-github-action@v8
+      # installer fails on current eas-cli via yarn.) eas authenticates from the
+      # EXPO_TOKEN env var on the build step below — no explicit login needed.
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
 
       - name: Install dependencies
         run: npm ci
@@ -94,6 +94,8 @@ jobs:
       # stderr, so stdout is clean JSON).
       - name: Build APK on EAS and wait for it to finish
         id: build
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           eas build --platform android --profile preview --non-interactive --json --wait > build.json
           STATUS=$(jq -r '.[0].status' build.json)
